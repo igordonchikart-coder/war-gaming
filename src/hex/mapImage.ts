@@ -1,11 +1,17 @@
 /** Max edge for GPU-friendly canvas textures (avoids loading 10k+ px maps as-is). */
 export const MAX_MAP_TEXTURE_EDGE = 4096
 
-/** Default underlay served from `public/map/`. Prefer WebP 2048–4096. */
-export const DEFAULT_MAP_IMAGE_URL = '/map/base.webp'
+/**
+ * Prefer full local underlay `public/map.webp` (often gitignored if huge).
+ * Falls back to the repo-friendly export in `public/map/`.
+ */
+export const DEFAULT_MAP_IMAGE_URL = '/map.webp'
 
-/** Optional smaller fallback if the primary asset fails. */
-export const FALLBACK_MAP_IMAGE_URL = '/map/base-2048.webp'
+/** Repo export used when the full `map.webp` is missing or fails to load. */
+export const FALLBACK_MAP_IMAGE_URL = '/map/base.webp'
+
+/** Smaller last-resort asset if the primary fallback also fails. */
+export const SECONDARY_FALLBACK_MAP_IMAGE_URL = '/map/base-2048.webp'
 
 /**
  * Additional tile URLs (loaded one-by-one). Put files in `public/map/` and list
@@ -92,9 +98,14 @@ export async function loadMapImage(url: string): Promise<LoadedMapImage> {
   }
 }
 
+const PRIMARY_FALLBACK_CHAIN = [
+  FALLBACK_MAP_IMAGE_URL,
+  SECONDARY_FALLBACK_MAP_IMAGE_URL,
+] as const
+
 /**
  * Load primary map, then optional tiles sequentially (never all at once).
- * Falls back to a smaller WebP if the primary URL fails.
+ * Falls back through repo WebP exports if the primary URL fails.
  */
 export async function loadMapImagesProgressive(
   primaryUrl = DEFAULT_MAP_IMAGE_URL,
@@ -111,13 +122,24 @@ export async function loadMapImagesProgressive(
       results.push(loaded)
       onProgress?.(loaded, i, urls.length)
     } catch (err) {
-      if (i === 0 && primaryUrl !== FALLBACK_MAP_IMAGE_URL) {
-        const fallback = await loadMapImage(FALLBACK_MAP_IMAGE_URL)
-        results.push(fallback)
-        onProgress?.(fallback, i, urls.length)
-        continue
+      if (i === 0) {
+        let recovered: LoadedMapImage | null = null
+        for (const fallbackUrl of PRIMARY_FALLBACK_CHAIN) {
+          if (fallbackUrl === primaryUrl) continue
+          try {
+            recovered = await loadMapImage(fallbackUrl)
+            break
+          } catch {
+            // try next fallback
+          }
+        }
+        if (recovered) {
+          results.push(recovered)
+          onProgress?.(recovered, i, urls.length)
+          continue
+        }
+        throw err
       }
-      if (i === 0) throw err
       // Skip missing optional tiles
       console.warn(err)
     }
