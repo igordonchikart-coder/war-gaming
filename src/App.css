@@ -1,7 +1,9 @@
 .editor {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background:
     radial-gradient(1200px 600px at 10% -10%, #2a3540 0%, transparent 55%),
     radial-gradient(900px 500px at 100% 0%, #243028 0%, transparent 50%),
@@ -10,48 +12,59 @@
 }
 
 .editor__header {
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
   gap: 1rem;
-  padding: 1.25rem 1.5rem 0.75rem;
+  padding: 0.85rem 1rem 0.65rem;
   border-bottom: 1px solid rgba(232, 228, 220, 0.12);
 }
 
 .editor__header h1 {
   margin: 0;
   font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
-  font-size: 1.75rem;
+  font-size: 1.5rem;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
 .editor__subtitle {
-  margin: 0.2rem 0 0;
+  margin: 0.15rem 0 0;
   color: #a8b0b8;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
 }
 
 .editor__status {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: #b8c0c8;
+  text-align: right;
+  max-width: min(48vw, 36rem);
 }
 
 .editor__toolbar {
+  flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
-  gap: 1.25rem 1.75rem;
-  padding: 0.9rem 1.5rem;
+  gap: 0.85rem 1.25rem;
+  padding: 0.65rem 1rem;
   border-bottom: 1px solid rgba(232, 228, 220, 0.08);
   background: rgba(0, 0, 0, 0.18);
+  max-height: 42vh;
+  overflow: auto;
 }
 
 .tool-group {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.35rem;
+}
+
+.tool-group--align {
+  flex: 1 1 100%;
+  min-width: min(100%, 36rem);
 }
 
 .tool-group__label {
@@ -76,7 +89,7 @@
 .file-controls button,
 .size-controls button,
 .layer-controls button,
-.align-controls button {
+.align-controls > button {
   appearance: none;
   border: 1px solid rgba(232, 228, 220, 0.2);
   background: rgba(255, 255, 255, 0.04);
@@ -93,28 +106,84 @@
   background: rgba(240, 234, 216, 0.12);
 }
 
-.align-controls label {
+.align-controls__check {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  margin-right: 0.25rem;
   font-size: 0.8rem;
   color: #b8c0c8;
 }
 
-.align-controls__check {
-  margin-right: 0.25rem;
+.precision-field {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid rgba(232, 228, 220, 0.12);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.18);
 }
 
-.align-controls input[type='range'] {
-  width: 7rem;
+.precision-field__label {
+  font-size: 0.75rem;
+  color: #b8c0c8;
+  min-width: 3.2rem;
+}
+
+.precision-field__range {
+  width: 8.5rem;
+  min-width: 6rem;
+  flex: 1 1 6rem;
   accent-color: #c5d6a1;
+  cursor: pointer;
 }
 
-.align-controls__value {
-  min-width: 2.4rem;
+.precision-field__range:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.precision-field__exact {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.precision-field__number {
+  width: 4.2rem;
+  border: 1px solid rgba(232, 228, 220, 0.2);
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+  border-radius: 4px;
+  padding: 0.25rem 0.3rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.75rem;
-  color: #8a949e;
+}
+
+.precision-field__nudge {
+  appearance: none;
+  width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+  border: 1px solid rgba(232, 228, 220, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.precision-field__nudge:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.precision-field__nudge:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .palette__btn {
@@ -164,26 +233,59 @@
 .file-controls button:hover,
 .size-controls button:hover,
 .layer-controls button:hover,
-.align-controls button:hover {
+.align-controls > button:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* Full-bleed map area: toolbar above, canvas takes remaining width/height. */
 .editor__canvas-wrap {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  margin: 0;
+}
+
+.hex-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
   overflow: auto;
-  padding: 1rem 1.5rem 1.5rem;
+  overscroll-behavior: contain;
+  background: #0f1216;
+  /* Avoid browser gesture conflicts with our pan/pinch handlers. */
+  touch-action: none;
+}
+
+.hex-canvas-spacer {
+  display: block;
 }
 
 .hex-canvas {
   display: block;
-  cursor: crosshair;
-  border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  border-radius: 0;
+  box-shadow: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 @media (max-width: 720px) {
   .editor__header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .editor__status {
+    text-align: left;
+    max-width: none;
+  }
+
+  .precision-field__range {
+    width: 100%;
   }
 }

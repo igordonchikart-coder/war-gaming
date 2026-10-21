@@ -27,7 +27,8 @@ import {
   type MapData,
   type Terrain,
 } from '../hex/types'
-import { HexCanvas, MAX_VIEW_SCALE, MIN_VIEW_SCALE } from './HexCanvas'
+import { HexCanvas, MAX_VIEW_SCALE, MIN_VIEW_SCALE, type CanvasTool } from './HexCanvas'
+import { PrecisionField } from './PrecisionField'
 
 /** Drawn cells = width × height = tiles.length (odd-q rectangular grid). */
 function formatGridSize(map: MapData): string {
@@ -122,6 +123,7 @@ export function MapEditor() {
   const [gridOpacity, setGridOpacity] = useState(initial.gridOpacity)
   const [mapImages, setMapImages] = useState<LoadedMapImage[]>([])
   const [viewScale, setViewScale] = useState(initial.viewZoom)
+  const [tool, setTool] = useState<CanvasTool>('paint')
   /** Optional GPU-friendly downscale; default is full master quality. */
   const [fastUnderlay, setFastUnderlay] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -308,6 +310,28 @@ export function MapEditor() {
       </header>
 
       <div className="editor__toolbar">
+        <section className="tool-group" aria-label="Инструмент">
+          <span className="tool-group__label">Инструмент</span>
+          <div className="layer-controls">
+            <button
+              type="button"
+              className={tool === 'paint' ? 'is-active' : ''}
+              onClick={() => setTool('paint')}
+              title="ЛКМ — рисовать тайл"
+            >
+              Кисть
+            </button>
+            <button
+              type="button"
+              className={tool === 'pan' ? 'is-active' : ''}
+              onClick={() => setTool('pan')}
+              title="ЛКМ — двигать карту (также Space+drag / СКМ)"
+            >
+              Рука
+            </button>
+          </div>
+        </section>
+
         <section className="tool-group" aria-label="Палитра тайлов">
           <span className="tool-group__label">Тайл</span>
           <div className="palette">
@@ -316,7 +340,10 @@ export function MapEditor() {
                 key={t}
                 type="button"
                 className={`palette__btn${brush === t ? ' is-active' : ''}`}
-                onClick={() => setBrush(t)}
+                onClick={() => {
+                  setBrush(t)
+                  setTool('paint')
+                }}
                 style={{ ['--swatch' as string]: TERRAIN_COLORS[t] }}
               >
                 <span className="palette__swatch" aria-hidden />
@@ -389,10 +416,13 @@ export function MapEditor() {
           </div>
         </section>
 
-        <section className="tool-group" aria-label="Выравнивание карты">
+        <section className="tool-group tool-group--align" aria-label="Выравнивание карты">
           <span className="tool-group__label">Выравнивание</span>
           <div className="align-controls">
-            <label className="align-controls__check">
+            <label
+              className="align-controls__check"
+              title="Подложка по ширине гекс-поля + сцена на всю ширину области холста (пересчёт при resize)"
+            >
               <input
                 type="checkbox"
                 checked={align.fitWidth}
@@ -400,55 +430,54 @@ export function MapEditor() {
               />
               Fit width
             </label>
-            <label title="Масштаб только подложки относительно сетки (не зум сцены)">
-              Scale подложки
-              <input
-                type="range"
-                min={0.2}
-                max={3}
-                step={0.01}
-                value={align.scale}
-                onChange={(e) => updateAlign({ scale: Number(e.target.value) })}
-              />
-              <span className="align-controls__value">{align.scale.toFixed(2)}</span>
-            </label>
-            <label>
-              X
-              <input
-                type="range"
-                min={-400}
-                max={400}
-                step={1}
-                value={align.offsetX}
-                onChange={(e) => updateAlign({ offsetX: Number(e.target.value) })}
-              />
-              <span className="align-controls__value">{align.offsetX}</span>
-            </label>
-            <label>
-              Y
-              <input
-                type="range"
-                min={-400}
-                max={400}
-                step={1}
-                value={align.offsetY}
-                onChange={(e) => updateAlign({ offsetY: Number(e.target.value) })}
-              />
-              <span className="align-controls__value">{align.offsetY}</span>
-            </label>
-            <label>
-              Сетка α
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={gridOpacity}
-                onChange={(e) => setGridOpacity(Number(e.target.value))}
-                disabled={layerMode === 'map'}
-              />
-              <span className="align-controls__value">{gridOpacity.toFixed(2)}</span>
-            </label>
+            <PrecisionField
+              label="Scale"
+              title="Масштаб подложки относительно сетки (не зум сцены)"
+              value={align.scale}
+              min={0.2}
+              max={3}
+              step={0.01}
+              decimals={2}
+              onChange={(scale) => updateAlign({ scale })}
+            />
+            <PrecisionField
+              label="X"
+              value={align.offsetX}
+              min={-800}
+              max={800}
+              step={1}
+              decimals={0}
+              onChange={(offsetX) => updateAlign({ offsetX })}
+            />
+            <PrecisionField
+              label="Y"
+              value={align.offsetY}
+              min={-800}
+              max={800}
+              step={1}
+              decimals={0}
+              onChange={(offsetY) => updateAlign({ offsetY })}
+            />
+            <PrecisionField
+              label="Zoom"
+              title="Зум сцены (щипок / Ctrl+колёсико / шкала). При Fit width при resize снова подгоняется под ширину холста"
+              value={viewScale}
+              min={MIN_VIEW_SCALE}
+              max={MAX_VIEW_SCALE}
+              step={0.01}
+              decimals={2}
+              onChange={setViewScale}
+            />
+            <PrecisionField
+              label="Сетка α"
+              value={gridOpacity}
+              min={0}
+              max={1}
+              step={0.01}
+              decimals={2}
+              onChange={setGridOpacity}
+              disabled={layerMode === 'map'}
+            />
             <button
               type="button"
               onClick={() => {
@@ -463,7 +492,7 @@ export function MapEditor() {
               Сохранить калибровку
             </button>
             <span className="size-controls__hint" title="Автосохранение при изменении; также в Скачать JSON / Save LS">
-              калибровка сохраняется в JSON / localStorage
+              тяните шкалу или ± / число · калибровка → JSON / LS
             </span>
           </div>
         </section>
@@ -514,6 +543,8 @@ export function MapEditor() {
           gridOpacity={gridOpacity}
           viewScale={viewScale}
           onViewScaleChange={setViewScale}
+          tool={tool}
+          fitViewportWidth
         />
       </div>
     </div>

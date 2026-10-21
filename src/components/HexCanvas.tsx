@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { axialToPixel, hexCorners, pixelToAxial } from '../hex/math'
 import { getTerrain, inBounds } from '../hex/map'
 import {
@@ -18,6 +18,8 @@ const PADDING = 24
 const MIN_VIEW_SCALE = 0.25
 const MAX_VIEW_SCALE = 4
 
+export type CanvasTool = 'paint' | 'pan'
+
 interface HexCanvasProps {
   map: MapData
   selectedTerrain: Terrain
@@ -31,15 +33,27 @@ interface HexCanvasProps {
   gridOpacity?: number
   /** Controlled scene zoom (pinch / ctrl+wheel). */
   viewScale?: number
-  /** Called when view zoom changes (pinch / ctrl+wheel). */
+  /** Called when view zoom changes (pinch / ctrl+wheel / fit). */
   onViewScaleChange?: (scale: number) => void
+  /** Active tool: paint brush or hand (pan). */
+  tool?: CanvasTool
+  /**
+   * When true with align.fitWidth, scene zoom is set so map width matches
+   * the viewport (recalculated on resize).
+   */
+  fitViewportWidth?: boolean
 }
 
 function clampViewScale(n: number): number {
   return Math.min(MAX_VIEW_SCALE, Math.max(MIN_VIEW_SCALE, n))
 }
 
-function mapPixelSize(map: MapData): { width: number; height: number; originX: number; originY: number } {
+export function mapPixelSize(map: MapData): {
+  width: number
+  height: number
+  originX: number
+  originY: number
+} {
   let minX = Infinity
   let maxX = -Infinity
   let minY = Infinity
@@ -122,15 +136,8 @@ function touchDistance(a: Touch, b: Touch): number {
   return Math.hypot(dx, dy)
 }
 
-function findScrollParent(el: HTMLElement | null): HTMLElement | null {
-  let node = el?.parentElement ?? null
-  while (node) {
-    const style = getComputedStyle(node)
-    const overflow = style.overflow + style.overflowX + style.overflowY
-    if (/(auto|scroll)/.test(overflow)) return node
-    node = node.parentElement
-  }
-  return null
+function touchMidpoint(a: Touch, b: Touch): { x: number; y: number } {
+  return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
 }
 
 export function HexCanvas({
@@ -145,17 +152,34 @@ export function HexCanvas({
   gridOpacity = 0.45,
   viewScale: viewScaleProp,
   onViewScaleChange,
+  tool = 'paint',
+  fitViewportWidth = true,
 }: HexCanvasProps) {
+  const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const spacerRef = useRef<HTMLDivElement>(null)
   const paintingRef = useRef(false)
   const viewScaleRef = useRef(1)
-  const pinchRef = useRef<{ dist: number; scale: number } | null>(null)
+  const spaceHeldRef = useRef(false)
+  const panRef = useRef<{
+    pointerId: number
+    lastX: number
+    lastY: number
+  } | null>(null)
+  const pinchRef = useRef<{
+    dist: number
+    scale: number
+    midX: number
+    midY: number
+  } | null>(null)
   const [internalViewScale, setInternalViewScale] = useState(1)
+  const [spaceHeld, setSpaceHeld] = useState(false)
+  const [panning, setPanning] = useState(false)
   const viewScale = viewScaleProp ?? internalViewScale
   const layout = mapPixelSize(map)
   const showMap = layerMode === 'map' || layerMode === 'both'
   const showGrid = layerMode === 'grid' || layerMode === 'both'
+  const wantPanCursor = tool === 'pan' || spaceHeld || panning
 
   useEffect(() => {
     viewScaleRef.current = viewScale
@@ -167,6 +191,32 @@ export function HexCanvas({
     if (viewScaleProp === undefined) setInternalViewScale(clamped)
     onViewScaleChange?.(clamped)
   }
+
+  /** Fit scene so map width matches the viewport content box. */
+  function fitToViewportWidth() {
+    const viewport = viewportRef.current
+    if (!viewport || layout.width <= 0) return
+    const next = clampViewScale(viewport.clientWidth / layout.width)
+    if (Math.abs(next - viewScaleRef.current) < 1e-4) return
+    setViewScale(next)
+  }
+
+  // Fit width → scene fills canvas area; recalc on resize / map size change.
+  useEffect(() => {
+    if (!fitViewportWidth || !align.fitWidth) return
+    const viewport = viewportRef.current
+    if (!viewport) return
+
+    fitToViewportWidth()
+
+    const ro = new ResizeObserver(() => {
+      fitToViewportWidth()
+    })
+    ro.observe(viewport)
+    return () => ro.disconnect()
+    // layout.width / fitWidth gate the effect; fit reads viewport live.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [fitViewportWidth, align.fitWidth, layout.width, map.width, map.height])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -254,14 +304,14 @@ export function HexCanvas({
 
   /** Zoom whole scene (underlay + grid) keeping the point under the cursor fixed. */
   function zoomTo(clientX: number, clientY: number, nextScale: number) {
+    const viewport = viewportRef.current
     const spacer = spacerRef.current
-    const scrollParent = findScrollParent(spacer)
     const oldScale = viewScaleRef.current
     const clamped = clampViewScale(nextScale)
-    if (!spacer || Math.abs(clamped - oldScale) < 1e-6) return
+    if (!spacer || !viewport || Math.abs(clamped - oldScale) < 1e-6) return
 
     const spacerRect = spacer.getBoundingClientRect()
-    const parentRect = scrollParent?.getBoundingClientRect()
+    const parentRect = viewport.getBoundingClientRect()
     const offsetX = clientX - spacerRect.left
     const offsetY = clientY - spacerRect.top
     const contentX = offsetX / oldScale
@@ -270,31 +320,103 @@ export function HexCanvas({
     setViewScale(clamped)
 
     requestAnimationFrame(() => {
-      if (!scrollParent || !parentRect) return
       const newLeft = spacer.offsetLeft + contentX * clamped - (clientX - parentRect.left)
       const newTop = spacer.offsetTop + contentY * clamped - (clientY - parentRect.top)
-      scrollParent.scrollLeft = Math.max(0, newLeft)
-      scrollParent.scrollTop = Math.max(0, newTop)
+      viewport.scrollLeft = Math.max(0, newLeft)
+      viewport.scrollTop = Math.max(0, newTop)
     })
   }
 
+  function panBy(dx: number, dy: number) {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    viewport.scrollLeft -= dx
+    viewport.scrollTop -= dy
+  }
+
+  // Space = temporary pan (does not steal typing from number inputs).
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const isTypingTarget = (t: EventTarget | null) => {
+      if (!(t instanceof HTMLElement)) return false
+      const tag = t.tagName
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || e.repeat) return
+      if (isTypingTarget(e.target)) return
+      e.preventDefault()
+      spaceHeldRef.current = true
+      setSpaceHeld(true)
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return
+      spaceHeldRef.current = false
+      setSpaceHeld(false)
+      if (panRef.current) {
+        panRef.current = null
+        setPanning(false)
+      }
+    }
+    const onBlur = () => {
+      spaceHeldRef.current = false
+      setSpaceHeld(false)
+      panRef.current = null
+      setPanning(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [])
+
+  // Wheel zoom (pinch / ctrl) + trackpad pan fallback via scroll deltas.
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
 
     const onWheel = (e: WheelEvent) => {
       // Trackpad pinch on Mac synthesizes wheel + ctrlKey; also support ctrl/meta+wheel.
-      if (!e.ctrlKey && !e.metaKey) return
-      e.preventDefault()
-      const factor = Math.exp(-e.deltaY * 0.01)
-      zoomTo(e.clientX, e.clientY, viewScaleRef.current * factor)
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault()
+        const factor = Math.exp(-e.deltaY * 0.01)
+        zoomTo(e.clientX, e.clientY, viewScaleRef.current * factor)
+        return
+      }
+      // Two-finger trackpad pan: apply deltas ourselves so the canvas under the
+      // cursor does not swallow scroll (touch-action: none / nested scroll).
+      if (e.deltaX !== 0 || e.deltaY !== 0) {
+        e.preventDefault()
+        panBy(-e.deltaX, -e.deltaY)
+      }
     }
+
+    viewport.addEventListener('wheel', onWheel, { passive: false })
+    return () => viewport.removeEventListener('wheel', onWheel)
+    // zoomTo/panBy close over refs; rebind when layout size changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [layout.width, layout.height])
+
+  // Touch: two-finger pinch + pan together.
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
 
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
+        paintingRef.current = false
+        const a = e.touches[0]!
+        const b = e.touches[1]!
+        const mid = touchMidpoint(a, b)
         pinchRef.current = {
-          dist: touchDistance(e.touches[0]!, e.touches[1]!),
+          dist: touchDistance(a, b),
           scale: viewScaleRef.current,
+          midX: mid.x,
+          midY: mid.y,
         }
       }
     }
@@ -305,31 +427,42 @@ export function HexCanvas({
       const a = e.touches[0]!
       const b = e.touches[1]!
       const dist = touchDistance(a, b)
-      if (pinchRef.current.dist < 1) return
-      const midX = (a.clientX + b.clientX) / 2
-      const midY = (a.clientY + b.clientY) / 2
-      zoomTo(midX, midY, pinchRef.current.scale * (dist / pinchRef.current.dist))
+      const mid = touchMidpoint(a, b)
+      const prev = pinchRef.current
+
+      // Pan by midpoint delta first (scroll), then zoom around new midpoint.
+      panBy(mid.x - prev.midX, mid.y - prev.midY)
+
+      if (prev.dist >= 1) {
+        zoomTo(mid.x, mid.y, prev.scale * (dist / prev.dist))
+      }
+
+      pinchRef.current = {
+        dist,
+        scale: viewScaleRef.current,
+        midX: mid.x,
+        midY: mid.y,
+      }
     }
 
     const onTouchEnd = (e: TouchEvent) => {
       if (e.touches.length < 2) pinchRef.current = null
     }
 
-    canvas.addEventListener('wheel', onWheel, { passive: false })
-    canvas.addEventListener('touchstart', onTouchStart, { passive: true })
-    canvas.addEventListener('touchmove', onTouchMove, { passive: false })
-    canvas.addEventListener('touchend', onTouchEnd)
-    canvas.addEventListener('touchcancel', onTouchEnd)
+    viewport.addEventListener('touchstart', onTouchStart, { passive: true })
+    viewport.addEventListener('touchmove', onTouchMove, { passive: false })
+    viewport.addEventListener('touchend', onTouchEnd)
+    viewport.addEventListener('touchcancel', onTouchEnd)
     return () => {
-      canvas.removeEventListener('wheel', onWheel)
-      canvas.removeEventListener('touchstart', onTouchStart)
-      canvas.removeEventListener('touchmove', onTouchMove)
-      canvas.removeEventListener('touchend', onTouchEnd)
-      canvas.removeEventListener('touchcancel', onTouchEnd)
+      viewport.removeEventListener('touchstart', onTouchStart)
+      viewport.removeEventListener('touchmove', onTouchMove)
+      viewport.removeEventListener('touchend', onTouchEnd)
+      viewport.removeEventListener('touchcancel', onTouchEnd)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, [layout.width, layout.height])
 
-  function eventToHex(e: MouseEvent<HTMLCanvasElement>): { q: number; r: number } | null {
+  function eventToHex(e: { clientX: number; clientY: number }): { q: number; r: number } | null {
     const canvas = canvasRef.current
     if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
@@ -342,57 +475,117 @@ export function HexCanvas({
     return hex
   }
 
-  function paintAt(e: MouseEvent<HTMLCanvasElement>) {
+  function paintAt(e: { clientX: number; clientY: number }) {
     const hex = eventToHex(e)
     if (!hex) return
     onPaint(hex.q, hex.r)
   }
 
+  function shouldPan(e: ReactMouseEvent | PointerEvent): boolean {
+    if (e.button === 1) return true // middle
+    if (tool === 'pan' && e.button === 0) return true
+    if (spaceHeldRef.current && e.button === 0) return true
+    return false
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (shouldPan(e)) {
+      e.preventDefault()
+      paintingRef.current = false
+      panRef.current = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY }
+      setPanning(true)
+      canvasRef.current?.setPointerCapture(e.pointerId)
+      return
+    }
+    if (e.button !== 0 || tool !== 'paint') return
+    paintingRef.current = true
+    paintAt(e)
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
+    const pan = panRef.current
+    if (pan && pan.pointerId === e.pointerId) {
+      panBy(e.clientX - pan.lastX, e.clientY - pan.lastY)
+      pan.lastX = e.clientX
+      pan.lastY = e.clientY
+      return
+    }
+    if (tool !== 'paint' || spaceHeldRef.current) {
+      onHover(null)
+      return
+    }
+    const hex = eventToHex(e)
+    onHover(hex)
+    if (paintingRef.current && hex) {
+      onPaint(hex.q, hex.r)
+    }
+  }
+
+  function endPan(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (panRef.current?.pointerId === e.pointerId) {
+      panRef.current = null
+      setPanning(false)
+      try {
+        canvasRef.current?.releasePointerCapture(e.pointerId)
+      } catch {
+        // already released
+      }
+    }
+    paintingRef.current = false
+  }
+
+  const cursor = panning ? 'grabbing' : wantPanCursor ? 'grab' : 'crosshair'
+
   return (
-    <div
-      ref={spacerRef}
-      className="hex-canvas-spacer"
-      style={{
-        width: layout.width * viewScale,
-        height: layout.height * viewScale,
-        position: 'relative',
-      }}
-    >
-      <canvas
-        ref={canvasRef}
-        className="hex-canvas"
-        aria-label="Гекс-карта"
+    <div ref={viewportRef} className="hex-viewport" aria-label="Область карты">
+      <div
+        ref={spacerRef}
+        className="hex-canvas-spacer"
         style={{
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          width: layout.width,
-          height: layout.height,
-          transform: `scale(${viewScale})`,
-          transformOrigin: '0 0',
-          touchAction: 'none',
+          width: layout.width * viewScale,
+          height: layout.height * viewScale,
+          position: 'relative',
         }}
-        onMouseDown={(e) => {
-          if (e.button !== 0) return
-          paintingRef.current = true
-          paintAt(e)
-        }}
-        onMouseUp={() => {
-          paintingRef.current = false
-        }}
-        onMouseLeave={() => {
-          paintingRef.current = false
-          onHover(null)
-        }}
-        onMouseMove={(e) => {
-          const hex = eventToHex(e)
-          onHover(hex)
-          if (paintingRef.current && hex) {
-            onPaint(hex.q, hex.r)
+      >
+        <canvas
+          ref={canvasRef}
+          className="hex-canvas"
+          aria-label="Гекс-карта"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: layout.width,
+            height: layout.height,
+            transform: `scale(${viewScale})`,
+            transformOrigin: '0 0',
+            touchAction: 'none',
+            cursor,
+          }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endPan}
+          onPointerCancel={endPan}
+          onPointerLeave={() => {
+            if (!panRef.current) {
+              paintingRef.current = false
+              onHover(null)
+            }
+          }}
+          onAuxClick={(e) => {
+            // Block middle-click default (autoscroll / open tab) while panning.
+            if (e.button === 1) e.preventDefault()
+          }}
+          onContextMenu={(e) => {
+            if (tool === 'pan' || spaceHeldRef.current) e.preventDefault()
+          }}
+          title={
+            tool === 'pan' || spaceHeld
+              ? 'Рука: перетащите карту'
+              : `Кисть: ${selectedTerrain} · Space/СКМ — pan · щипок — зум`
           }
-        }}
-        title={`Кисть: ${selectedTerrain}`}
-      />
+        />
+      </div>
     </div>
   )
 }
