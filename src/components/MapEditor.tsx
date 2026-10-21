@@ -51,6 +51,8 @@ export function MapEditor() {
   const [gridOpacity, setGridOpacity] = useState(0.45)
   const [mapImages, setMapImages] = useState<LoadedMapImage[]>([])
   const [viewScale, setViewScale] = useState(1)
+  /** Optional GPU-friendly downscale; default is full master quality. */
+  const [fastUnderlay, setFastUnderlay] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -60,22 +62,31 @@ export function MapEditor() {
 
   useEffect(() => {
     let cancelled = false
-    setStatus('Загрузка подложки…')
-    loadMapImagesProgressive(undefined, undefined, (loaded, index, total) => {
-      if (cancelled) return
-      setStatus(
-        `Подложка ${index + 1}/${total}` +
-          (loaded.downscaled ? ' (даунскейл)' : '') +
-          ` · ${loaded.naturalWidth}×${loaded.naturalHeight} px`,
-      )
-    })
+    setStatus(fastUnderlay ? 'Загрузка подложки (быстрая)…' : 'Загрузка подложки (FULL)…')
+    loadMapImagesProgressive(
+      undefined,
+      undefined,
+      (loaded, index, total) => {
+        if (cancelled) return
+        const quality = loaded.downscaled ? 'даунскейл' : 'FULL'
+        setStatus(
+          `Подложка ${index + 1}/${total} · ${quality} · ${loaded.url} · ${loaded.naturalWidth}×${loaded.naturalHeight} px`,
+        )
+      },
+      { fast: fastUnderlay },
+    )
       .then((images) => {
         if (cancelled) return
         setMapImages(images)
+        if (!images.length) {
+          setStatus('Подложка не найдена (см. public/map/README.md)')
+          return
+        }
+        const primary = images[0]!
+        const quality = primary.downscaled ? 'даунскейл' : 'FULL'
         setStatus(
-          images.length
-            ? `Подложка: ${images.map((i) => i.url).join(', ')}`
-            : 'Подложка не найдена (см. public/map/README.md)',
+          `Подложка ${quality} · ${primary.url} · ${primary.naturalWidth}×${primary.naturalHeight} px` +
+            (images.length > 1 ? ` (+${images.length - 1} тайлов)` : ''),
         )
       })
       .catch((err) => {
@@ -86,7 +97,7 @@ export function MapEditor() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [fastUnderlay])
 
   const paint = useCallback(
     (q: number, r: number) => {
@@ -249,6 +260,17 @@ export function MapEditor() {
                 {opt.label}
               </button>
             ))}
+            <label
+              className="align-controls__check"
+              title="По умолчанию FULL: /map.webp без даунскейла. Включите только если тормозит."
+            >
+              <input
+                type="checkbox"
+                checked={fastUnderlay}
+                onChange={(e) => setFastUnderlay(e.target.checked)}
+              />
+              Быстрая подложка
+            </label>
           </div>
         </section>
 

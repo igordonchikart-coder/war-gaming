@@ -94,10 +94,8 @@ function drawMapUnderlay(
 ) {
   if (images.length === 0) return
 
-  ctx.imageSmoothingEnabled = true
-  ctx.imageSmoothingQuality = 'high'
-
   // Primary image aligned to hex field; extra tiles drawn sequentially to the right.
+  // Source stays at natural pixels (no preload downscale). Fit/zoom only via draw + CSS.
   let cursorX = field.x + align.offsetX
   const baseY = field.y + align.offsetY
 
@@ -107,9 +105,11 @@ function drawMapUnderlay(
     const scale = align.fitWidth ? fitScale * align.scale : align.scale
     const dw = img.naturalWidth * scale
     const dh = img.naturalHeight * scale
-    const dx = i === 0 ? cursorX : cursorX
-    const dy = baseY
-    ctx.drawImage(img.source, dx, dy, dw, dh)
+    // Soften only when shrinking into the hex field; keep sharp when 1:1 or upscaling.
+    const shrinking = dw < img.naturalWidth - 0.5 || dh < img.naturalHeight - 0.5
+    ctx.imageSmoothingEnabled = shrinking
+    if (shrinking) ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(img.source, 0, 0, img.naturalWidth, img.naturalHeight, cursorX, baseY, dw, dh)
     cursorX += dw
   }
 }

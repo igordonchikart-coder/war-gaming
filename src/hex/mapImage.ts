@@ -1,9 +1,6 @@
-/** Max edge for GPU-friendly canvas textures (avoids loading 10k+ px maps as-is). */
-export const MAX_MAP_TEXTURE_EDGE = 4096
-
 /**
  * Prefer full local underlay `public/map.webp` (often gitignored if huge).
- * Falls back to the repo-friendly export in `public/map/`.
+ * Falls back to the repo-friendly export in `public/map/` only if the primary fails.
  */
 export const DEFAULT_MAP_IMAGE_URL = '/map.webp'
 
@@ -12,6 +9,12 @@ export const FALLBACK_MAP_IMAGE_URL = '/map/base.webp'
 
 /** Smaller last-resort asset if the primary fallback also fails. */
 export const SECONDARY_FALLBACK_MAP_IMAGE_URL = '/map/base-2048.webp'
+
+/**
+ * Optional cap used only by “быстрая подложка” mode.
+ * Full quality (default) never applies this — prefer lag over silent downscale.
+ */
+export const FAST_MAP_TEXTURE_EDGE = 4096
 
 /**
  * Additional tile URLs (loaded one-by-one). Put files in `public/map/` and list
@@ -37,12 +40,21 @@ export const DEFAULT_MAP_ALIGN: MapImageAlign = {
   fitWidth: true,
 }
 
+export interface MapImageLoadOptions {
+  /**
+   * When true, may downscale to FAST_MAP_TEXTURE_EDGE for GPU/memory.
+   * Default false = keep natural pixels (master quality).
+   */
+  fast?: boolean
+}
+
 export interface LoadedMapImage {
-  /** Drawable source (may be an offscreen canvas after downscale). */
+  /** Drawable source — HTMLImageElement at natural size unless `fast` downscaled. */
   source: CanvasImageSource
+  /** Pixel size of `source` (natural unless fast-downscaled). */
   naturalWidth: number
   naturalHeight: number
-  /** True if we resized because the source exceeded MAX_MAP_TEXTURE_EDGE. */
+  /** True only when optional fast mode resized the bitmap. */
   downscaled: boolean
   url: string
 }
@@ -57,10 +69,13 @@ function loadHtmlImage(url: string): Promise<HTMLImageElement> {
   })
 }
 
-/** Downscale to max edge with smoothing; returns original if already small enough. */
+/**
+ * Optional downscale for “быстрая подложка”. Not used by default.
+ * Returns the original image when already within maxEdge.
+ */
 export function limitTextureSize(
   img: HTMLImageElement,
-  maxEdge = MAX_MAP_TEXTURE_EDGE,
+  maxEdge = FAST_MAP_TEXTURE_EDGE,
 ): { source: CanvasImageSource; width: number; height: number; downscaled: boolean } {
   const w = img.naturalWidth
   const h = img.naturalHeight
@@ -85,15 +100,27 @@ export function limitTextureSize(
   return { source: canvas, width: tw, height: th, downscaled: true }
 }
 
-/** Load one map URL; downscale if larger than max texture edge. */
-export async function loadMapImage(url: string): Promise<LoadedMapImage> {
+/** Load one map URL at natural resolution unless `options.fast` is set. */
+export async function loadMapImage(
+  url: string,
+  options: MapImageLoadOptions = {},
+): Promise<LoadedMapImage> {
   const img = await loadHtmlImage(url)
-  const limited = limitTextureSize(img)
+  if (options.fast) {
+    const limited = limitTextureSize(img)
+    return {
+      source: limited.source,
+      naturalWidth: limited.width,
+      naturalHeight: limited.height,
+      downscaled: limited.downscaled,
+      url,
+    }
+  }
   return {
-    source: limited.source,
-    naturalWidth: limited.width,
-    naturalHeight: limited.height,
-    downscaled: limited.downscaled,
+    source: img,
+    naturalWidth: img.naturalWidth,
+    naturalHeight: img.naturalHeight,
+    downscaled: false,
     url,
   }
 }
@@ -105,12 +132,13 @@ const PRIMARY_FALLBACK_CHAIN = [
 
 /**
  * Load primary map, then optional tiles sequentially (never all at once).
- * Falls back through repo WebP exports if the primary URL fails.
+ * Primary is always `/map.webp` (full master). Repo WebP exports are fallbacks only.
  */
 export async function loadMapImagesProgressive(
   primaryUrl = DEFAULT_MAP_IMAGE_URL,
   tileUrls: string[] = MAP_TILE_URLS,
   onProgress?: (loaded: LoadedMapImage, index: number, total: number) => void,
+  options: MapImageLoadOptions = {},
 ): Promise<LoadedMapImage[]> {
   const urls = [primaryUrl, ...tileUrls]
   const results: LoadedMapImage[] = []
@@ -118,7 +146,7 @@ export async function loadMapImagesProgressive(
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i]!
     try {
-      const loaded = await loadMapImage(url)
+      const loaded = await loadMapImage(url, options)
       results.push(loaded)
       onProgress?.(loaded, i, urls.length)
     } catch (err) {
@@ -127,7 +155,7 @@ export async function loadMapImagesProgressive(
         for (const fallbackUrl of PRIMARY_FALLBACK_CHAIN) {
           if (fallbackUrl === primaryUrl) continue
           try {
-            recovered = await loadMapImage(fallbackUrl)
+            recovered = await loadMapImage(fallbackUrl, options)
             break
           } catch {
             // try next fallback
