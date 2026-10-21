@@ -9,10 +9,10 @@ import type { MapImageAlign } from './mapImage'
  * where the scan is non-linear. Use «Калибровка 2 точки» to touch up a corner.
  */
 export const AUTO_CALIBRATION: MapImageAlign = {
-  scaleX: 0.20433437,
-  scaleY: 0.20431635,
-  offsetX: -65.863878,
-  offsetY: -62.178335,
+  scaleX: 0.20245399,
+  scaleY: 0.20322729,
+  offsetX: -62.625767,
+  offsetY: -58.884463,
   shearX: -0.00035,
   shearY: 0.00085,
   fitWidth: false,
