@@ -3,6 +3,7 @@ import {
   clampSize,
   createEmptyMap,
   parseMap,
+  parseMapAlign,
   resizeMap,
   serializeMap,
   setTerrain,
@@ -15,16 +16,18 @@ import {
   type MapLayerMode,
 } from '../hex/mapImage'
 import {
+  ALIGN_STORAGE_KEY,
   DEFAULT_MAP_SIZE,
   MAX_MAP_SIZE,
   MIN_MAP_SIZE,
   STORAGE_KEY,
   TERRAIN_COLORS,
   TERRAIN_LABELS,
+  type MapAlignPersist,
   type MapData,
   type Terrain,
 } from '../hex/types'
-import { HexCanvas } from './HexCanvas'
+import { HexCanvas, MAX_VIEW_SCALE, MIN_VIEW_SCALE } from './HexCanvas'
 
 /** Drawn cells = width × height = tiles.length (odd-q rectangular grid). */
 function formatGridSize(map: MapData): string {
@@ -39,21 +42,90 @@ const LAYER_OPTIONS: { id: MapLayerMode; label: string }[] = [
   { id: 'grid', label: 'Сетка' },
 ]
 
+function clampViewZoom(n: number): number {
+  return Math.min(MAX_VIEW_SCALE, Math.max(MIN_VIEW_SCALE, n))
+}
+
+function buildMapAlign(
+  align: MapImageAlign,
+  viewZoom: number,
+  layerMode: MapLayerMode,
+  gridOpacity: number,
+): MapAlignPersist {
+  return {
+    scale: align.scale,
+    offsetX: align.offsetX,
+    offsetY: align.offsetY,
+    fitWidth: align.fitWidth,
+    viewZoom,
+    layerMode,
+    gridOpacity,
+  }
+}
+
+function mapWithAlign(
+  map: MapData,
+  align: MapImageAlign,
+  viewZoom: number,
+  layerMode: MapLayerMode,
+  gridOpacity: number,
+): MapData {
+  return {
+    ...map,
+    mapAlign: buildMapAlign(align, viewZoom, layerMode, gridOpacity),
+  }
+}
+
+function applyMapAlignToState(
+  persist: MapAlignPersist | undefined,
+  setters: {
+    setAlign: (a: MapImageAlign) => void
+    setViewScale: (n: number) => void
+    setLayerMode: (m: MapLayerMode) => void
+    setGridOpacity: (n: number) => void
+  },
+) {
+  if (!persist) return
+  setters.setAlign({
+    scale: persist.scale,
+    offsetX: persist.offsetX,
+    offsetY: persist.offsetY,
+    fitWidth: persist.fitWidth,
+  })
+  if (persist.viewZoom !== undefined) {
+    setters.setViewScale(clampViewZoom(persist.viewZoom))
+  }
+  if (persist.layerMode) setters.setLayerMode(persist.layerMode)
+  if (persist.gridOpacity !== undefined) setters.setGridOpacity(persist.gridOpacity)
+}
+
+function loadAlignFromStorage(): MapAlignPersist | undefined {
+  try {
+    const raw = localStorage.getItem(ALIGN_STORAGE_KEY)
+    if (!raw) return undefined
+    return parseMapAlign(JSON.parse(raw))
+  } catch {
+    return undefined
+  }
+}
+
 export function MapEditor() {
-  const [map, setMap] = useState<MapData>(() => loadInitialMap())
+  const initial = loadInitialDocument()
+  const [map, setMap] = useState<MapData>(() => initial.map)
   const [brush, setBrush] = useState<Terrain>('plain')
   const [hover, setHover] = useState<{ q: number; r: number } | null>(null)
-  const [widthInput, setWidthInput] = useState(String(DEFAULT_MAP_SIZE))
-  const [heightInput, setHeightInput] = useState(String(DEFAULT_MAP_SIZE))
+  const [widthInput, setWidthInput] = useState(String(initial.map.width))
+  const [heightInput, setHeightInput] = useState(String(initial.map.height))
   const [status, setStatus] = useState('Готово')
-  const [layerMode, setLayerMode] = useState<MapLayerMode>('both')
-  const [align, setAlign] = useState<MapImageAlign>(DEFAULT_MAP_ALIGN)
-  const [gridOpacity, setGridOpacity] = useState(0.45)
+  const [layerMode, setLayerMode] = useState<MapLayerMode>(initial.layerMode)
+  const [align, setAlign] = useState<MapImageAlign>(initial.align)
+  const [gridOpacity, setGridOpacity] = useState(initial.gridOpacity)
   const [mapImages, setMapImages] = useState<LoadedMapImage[]>([])
-  const [viewScale, setViewScale] = useState(1)
+  const [viewScale, setViewScale] = useState(initial.viewZoom)
   /** Optional GPU-friendly downscale; default is full master quality. */
   const [fastUnderlay, setFastUnderlay] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const skipAutosaveRef = useRef(true)
 
   useEffect(() => {
     setWidthInput(String(map.width))
@@ -99,6 +171,24 @@ export function MapEditor() {
     }
   }, [fastUnderlay])
 
+  // Autosave map + calibration to localStorage (skip first paint).
+  useEffect(() => {
+    if (skipAutosaveRef.current) {
+      skipAutosaveRef.current = false
+      return
+    }
+    const timer = window.setTimeout(() => {
+      const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity)
+      try {
+        localStorage.setItem(STORAGE_KEY, serializeMap(doc))
+        localStorage.setItem(ALIGN_STORAGE_KEY, JSON.stringify(doc.mapAlign))
+      } catch {
+        // quota / private mode — ignore
+      }
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [map, align, viewScale, layerMode, gridOpacity])
+
   const paint = useCallback(
     (q: number, r: number) => {
       setMap((prev) => setTerrain(prev, q, r, brush))
@@ -128,7 +218,8 @@ export function MapEditor() {
   }
 
   function handleSaveDownload() {
-    const json = serializeMap(map)
+    const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity)
+    const json = serializeMap(doc)
     const blob = new Blob([json], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -136,12 +227,22 @@ export function MapEditor() {
     a.download = `war-gaming-map-${map.width}x${map.height}.json`
     a.click()
     URL.revokeObjectURL(url)
-    setStatus('Карта скачана')
+    setStatus('Карта + калибровка скачаны (mapAlign в JSON)')
   }
 
   function handleSaveLocal() {
-    localStorage.setItem(STORAGE_KEY, serializeMap(map))
-    setStatus('Сохранено в localStorage')
+    const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity)
+    localStorage.setItem(STORAGE_KEY, serializeMap(doc))
+    localStorage.setItem(ALIGN_STORAGE_KEY, JSON.stringify(doc.mapAlign))
+    setStatus('Сохранено в localStorage (карта + калибровка)')
+  }
+
+  function handleSaveCalibration() {
+    const persist = buildMapAlign(align, viewScale, layerMode, gridOpacity)
+    localStorage.setItem(ALIGN_STORAGE_KEY, JSON.stringify(persist))
+    const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity)
+    localStorage.setItem(STORAGE_KEY, serializeMap(doc))
+    setStatus('Калибровка сохранена (JSON / localStorage)')
   }
 
   function handleLoadLocal() {
@@ -151,8 +252,15 @@ export function MapEditor() {
       return
     }
     try {
-      setMap(parseMap(raw))
-      setStatus('Загружено из localStorage')
+      const parsed = parseMap(raw)
+      setMap(parsed)
+      applyMapAlignToState(parsed.mapAlign ?? loadAlignFromStorage(), {
+        setAlign,
+        setViewScale,
+        setLayerMode,
+        setGridOpacity,
+      })
+      setStatus('Загружено из localStorage (карта + калибровка)')
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Ошибка загрузки')
     }
@@ -163,7 +271,14 @@ export function MapEditor() {
     reader.onload = () => {
       try {
         const text = String(reader.result ?? '')
-        setMap(parseMap(text))
+        const parsed = parseMap(text)
+        setMap(parsed)
+        applyMapAlignToState(parsed.mapAlign, {
+          setAlign,
+          setViewScale,
+          setLayerMode,
+          setGridOpacity,
+        })
         setStatus(`Загружено: ${file.name}`)
       } catch (err) {
         setStatus(err instanceof Error ? err.message : 'Ошибка файла')
@@ -339,10 +454,17 @@ export function MapEditor() {
               onClick={() => {
                 setAlign(DEFAULT_MAP_ALIGN)
                 setGridOpacity(0.45)
+                setViewScale(1)
               }}
             >
               Сброс
             </button>
+            <button type="button" onClick={handleSaveCalibration} title="Записать scale/offset/zoom/слой в localStorage и в JSON карты">
+              Сохранить калибровку
+            </button>
+            <span className="size-controls__hint" title="Автосохранение при изменении; также в Скачать JSON / Save LS">
+              калибровка сохраняется в JSON / localStorage
+            </span>
           </div>
         </section>
 
@@ -390,6 +512,7 @@ export function MapEditor() {
           layerMode={layerMode}
           align={align}
           gridOpacity={gridOpacity}
+          viewScale={viewScale}
           onViewScaleChange={setViewScale}
         />
       </div>
@@ -397,12 +520,61 @@ export function MapEditor() {
   )
 }
 
-function loadInitialMap(): MapData {
+function loadInitialDocument(): {
+  map: MapData
+  align: MapImageAlign
+  viewZoom: number
+  layerMode: MapLayerMode
+  gridOpacity: number
+} {
+  const fallback = {
+    map: createEmptyMap(),
+    align: { ...DEFAULT_MAP_ALIGN },
+    viewZoom: 1,
+    layerMode: 'both' as MapLayerMode,
+    gridOpacity: 0.45,
+  }
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return parseMap(raw)
+    if (raw) {
+      const parsed = parseMap(raw)
+      const persist = parsed.mapAlign ?? loadAlignFromStorage()
+      if (!persist) {
+        return { ...fallback, map: parsed }
+      }
+      return {
+        map: parsed,
+        align: {
+          scale: persist.scale,
+          offsetX: persist.offsetX,
+          offsetY: persist.offsetY,
+          fitWidth: persist.fitWidth,
+        },
+        viewZoom: persist.viewZoom !== undefined ? clampViewZoom(persist.viewZoom) : 1,
+        layerMode: persist.layerMode ?? 'both',
+        gridOpacity: persist.gridOpacity ?? 0.45,
+      }
+    }
   } catch {
     // ignore corrupt storage
   }
-  return createEmptyMap()
+
+  const alignOnly = loadAlignFromStorage()
+  if (alignOnly) {
+    return {
+      ...fallback,
+      align: {
+        scale: alignOnly.scale,
+        offsetX: alignOnly.offsetX,
+        offsetY: alignOnly.offsetY,
+        fitWidth: alignOnly.fitWidth,
+      },
+      viewZoom: alignOnly.viewZoom !== undefined ? clampViewZoom(alignOnly.viewZoom) : 1,
+      layerMode: alignOnly.layerMode ?? 'both',
+      gridOpacity: alignOnly.gridOpacity ?? 0.45,
+    }
+  }
+
+  return fallback
 }

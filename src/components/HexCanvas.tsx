@@ -29,6 +29,8 @@ interface HexCanvasProps {
   align?: MapImageAlign
   /** Opacity of terrain fill when both map and grid are shown (0–1). */
   gridOpacity?: number
+  /** Controlled scene zoom (pinch / ctrl+wheel). */
+  viewScale?: number
   /** Called when view zoom changes (pinch / ctrl+wheel). */
   onViewScaleChange?: (scale: number) => void
 }
@@ -141,6 +143,7 @@ export function HexCanvas({
   layerMode = 'both',
   align = { scale: 1, offsetX: 0, offsetY: 0, fitWidth: true },
   gridOpacity = 0.45,
+  viewScale: viewScaleProp,
   onViewScaleChange,
 }: HexCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -148,15 +151,22 @@ export function HexCanvas({
   const paintingRef = useRef(false)
   const viewScaleRef = useRef(1)
   const pinchRef = useRef<{ dist: number; scale: number } | null>(null)
-  const [viewScale, setViewScale] = useState(1)
+  const [internalViewScale, setInternalViewScale] = useState(1)
+  const viewScale = viewScaleProp ?? internalViewScale
   const layout = mapPixelSize(map)
   const showMap = layerMode === 'map' || layerMode === 'both'
   const showGrid = layerMode === 'grid' || layerMode === 'both'
 
   useEffect(() => {
     viewScaleRef.current = viewScale
-    onViewScaleChange?.(viewScale)
-  }, [viewScale, onViewScaleChange])
+  }, [viewScale])
+
+  function setViewScale(next: number) {
+    const clamped = clampViewScale(next)
+    viewScaleRef.current = clamped
+    if (viewScaleProp === undefined) setInternalViewScale(clamped)
+    onViewScaleChange?.(clamped)
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -189,7 +199,8 @@ export function HexCanvas({
           const { x, y } = axialToPixel(q, r, HEX_SIZE)
           const cx = x + layout.originX
           const cy = y + layout.originY
-          const corners = hexCorners(cx, cy, HEX_SIZE - 1)
+          // Full HEX_SIZE — flat-top centers already use classic spacing; no inset/gap.
+          const corners = hexCorners(cx, cy, HEX_SIZE)
 
           ctx.beginPath()
           ctx.moveTo(corners[0]!.x, corners[0]!.y)
@@ -207,7 +218,9 @@ export function HexCanvas({
 
           const isHover = hover?.q === q && hover?.r === r
           ctx.strokeStyle = isHover ? '#f5f0e6' : 'rgba(0,0,0,0.45)'
+          // Stroke sits on the shared edge (no radius shrink); cells meet edge-to-edge.
           ctx.lineWidth = isHover ? 2 : 1
+          ctx.lineJoin = 'miter'
           ctx.stroke()
 
           // Labels = odd-q offset indices used by paint/hit-test (0-based).
@@ -225,7 +238,7 @@ export function HexCanvas({
       const { x, y } = axialToPixel(hover.q, hover.r, HEX_SIZE)
       const cx = x + layout.originX
       const cy = y + layout.originY
-      const corners = hexCorners(cx, cy, HEX_SIZE - 1)
+      const corners = hexCorners(cx, cy, HEX_SIZE)
       ctx.beginPath()
       ctx.moveTo(corners[0]!.x, corners[0]!.y)
       for (let i = 1; i < corners.length; i++) {
@@ -234,6 +247,7 @@ export function HexCanvas({
       ctx.closePath()
       ctx.strokeStyle = '#f5f0e6'
       ctx.lineWidth = 2
+      ctx.lineJoin = 'miter'
       ctx.stroke()
     }
   }, [map, hover, layout, mapImages, layerMode, align, gridOpacity, showMap, showGrid])
@@ -253,7 +267,6 @@ export function HexCanvas({
     const contentX = offsetX / oldScale
     const contentY = offsetY / oldScale
 
-    viewScaleRef.current = clamped
     setViewScale(clamped)
 
     requestAnimationFrame(() => {
