@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  bakeFitWidthOff,
+  hexFieldPixelWidth,
+  solveTwoPointAlign,
+  type CalibHex,
+  type CalibPoint,
+} from '../hex/calibrate'
+import {
   clampSize,
   createEmptyMap,
   parseMap,
@@ -32,7 +39,14 @@ import {
   type Terrain,
   type ViewportFitMode,
 } from '../hex/types'
-import { HexCanvas, MAX_VIEW_SCALE, MIN_VIEW_SCALE, type CanvasTool } from './HexCanvas'
+import {
+  HexCanvas,
+  MAX_VIEW_SCALE,
+  MIN_VIEW_SCALE,
+  type CalibPhase,
+  type CalibSessionMarkers,
+  type CanvasTool,
+} from './HexCanvas'
 import { PrecisionField } from './PrecisionField'
 
 /** Drawn cells = width × height = tiles.length (odd-q rectangular grid). */
@@ -60,7 +74,8 @@ function buildMapAlign(
   viewportFit: ViewportFitMode,
 ): MapAlignPersist {
   return {
-    scale: align.scale,
+    scaleX: align.scaleX,
+    scaleY: align.scaleY,
     offsetX: align.offsetX,
     offsetY: align.offsetY,
     fitWidth: align.fitWidth,
@@ -97,7 +112,8 @@ function applyMapAlignToState(
 ) {
   if (!persist) return
   setters.setAlign({
-    scale: persist.scale,
+    scaleX: persist.scaleX,
+    scaleY: persist.scaleY,
     offsetX: persist.offsetX,
     offsetY: persist.offsetY,
     fitWidth: persist.fitWidth,
@@ -138,8 +154,19 @@ export function MapEditor() {
   const [tool, setTool] = useState<CanvasTool>('paint')
   /** Optional GPU-friendly downscale; default is full master quality. */
   const [fastUnderlay, setFastUnderlay] = useState(false)
+  const [calibPhase, setCalibPhase] = useState<CalibPhase | null>(null)
+  const [calibMap1, setCalibMap1] = useState<CalibPoint | null>(null)
+  const [calibMap2, setCalibMap2] = useState<CalibPoint | null>(null)
+  const [calibHex1, setCalibHex1] = useState<CalibHex | null>(null)
+  const [calibHex2, setCalibHex2] = useState<CalibHex | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const skipAutosaveRef = useRef(true)
+  const mapImagesRef = useRef(mapImages)
+  mapImagesRef.current = mapImages
+  const mapRef = useRef(map)
+  mapRef.current = map
+  const alignRef = useRef(align)
+  alignRef.current = align
 
   useEffect(() => {
     setWidthInput(String(map.width))
@@ -336,14 +363,133 @@ export function MapEditor() {
     reader.readAsText(file)
   }
 
+  function fieldWidthForAlign(): number {
+    return hexFieldPixelWidth(mapRef.current.width)
+  }
+
+  function primaryImageWidth(): number {
+    return mapImagesRef.current[0]?.naturalWidth ?? 0
+  }
+
+  /**
+   * Patch align. Manual scaleX/Y bakes fitWidth off so Fit is only a starting point.
+   * Passing fitWidth explicitly (checkbox / reset / calib) is left as-is.
+   */
   function updateAlign(partial: Partial<MapImageAlign>) {
-    setAlign((prev) => ({ ...prev, ...partial }))
+    setAlign((prev) => {
+      let base = prev
+      const touchingScale =
+        (partial.scaleX !== undefined && partial.scaleX !== prev.scaleX) ||
+        (partial.scaleY !== undefined && partial.scaleY !== prev.scaleY)
+      if (touchingScale && partial.fitWidth === undefined && prev.fitWidth) {
+        const imgW = primaryImageWidth()
+        if (imgW > 0) {
+          base = bakeFitWidthOff(prev, fieldWidthForAlign(), imgW)
+        } else {
+          base = { ...prev, fitWidth: false }
+        }
+      }
+      return { ...base, ...partial }
+    })
+  }
+
+  function resetCalibrationSession() {
+    setCalibPhase(null)
+    setCalibMap1(null)
+    setCalibMap2(null)
+    setCalibHex1(null)
+    setCalibHex2(null)
+  }
+
+  function startTwoPointCalib() {
+    setCalibMap1(null)
+    setCalibMap2(null)
+    setCalibHex1(null)
+    setCalibHex2(null)
+    setCalibPhase('map1')
+    setTool('paint')
+    setStatus(
+      'Калибровка 2 точки: кликните центр печатного гекса A (угол листа, далеко слева)',
+    )
+  }
+
+  function cancelTwoPointCalib() {
+    resetCalibrationSession()
+    setStatus('Калибровка отменена')
+  }
+
+  function finishTwoPointCalib(
+    map1: CalibPoint,
+    map2: CalibPoint,
+    hex1: CalibHex,
+    hex2: CalibHex,
+  ) {
+    const imgW = primaryImageWidth()
+    if (!(imgW > 0)) {
+      setStatus('Нет подложки — калибровка невозможна')
+      resetCalibrationSession()
+      return
+    }
+    const result = solveTwoPointAlign({
+      mapClick1: map1,
+      mapClick2: map2,
+      hex1,
+      hex2,
+      currentAlign: alignRef.current,
+      fieldWidth: fieldWidthForAlign(),
+      imageNaturalWidth: imgW,
+    })
+    if ('error' in result) {
+      setStatus(`Калибровка: ${result.error}`)
+      resetCalibrationSession()
+      return
+    }
+    setAlign(result)
+    resetCalibrationSession()
+    setStatus(
+      `Калибровка OK · Scale X ${result.scaleX.toFixed(4)} · Y ${result.scaleY.toFixed(4)} · Fit выкл`,
+    )
+  }
+
+  function handleCalibMapClick(point: CalibPoint) {
+    if (calibPhase === 'map1') {
+      setCalibMap1(point)
+      setCalibPhase('map2')
+      setStatus('Калибровка: кликните центр печатного гекса B (далеко по диагонали)')
+      return
+    }
+    if (calibPhase === 'map2') {
+      setCalibMap2(point)
+      setCalibPhase('hex1')
+      setStatus('Калибровка: кликните гекс оверлея, соответствующий точке A')
+    }
+  }
+
+  function handleCalibHexClick(hex: CalibHex) {
+    if (calibPhase === 'hex1') {
+      setCalibHex1(hex)
+      setCalibPhase('hex2')
+      setStatus(`A = ${hex.q},${hex.r} · кликните гекс оверлея для точки B`)
+      return
+    }
+    if (calibPhase === 'hex2') {
+      if (!calibMap1 || !calibMap2 || !calibHex1) {
+        setStatus('Калибровка: не хватает точек — начните снова')
+        resetCalibrationSession()
+        return
+      }
+      finishTwoPointCalib(calibMap1, calibMap2, calibHex1, hex)
+    }
   }
 
   function handleViewScaleChange(next: number) {
     setViewportFit('free')
     setViewScale(next)
   }
+
+  const calibMarkers: CalibSessionMarkers | undefined = calibPhase
+    ? { map1: calibMap1, map2: calibMap2, hex1: calibHex1, hex2: calibHex2 }
+    : undefined
 
   return (
     <div className="editor">
@@ -511,24 +657,47 @@ export function MapEditor() {
           <div className="align-controls">
             <label
               className="align-controls__check"
-              title="Калибровка: ширина подложки = ширина гекс-поля (не кадр viewport)"
+              title="Старт: ширина подложки = ширина гекс-поля. Ручной Scale X/Y или калибровка 2 точки выключают Fit (значения запекаются)."
             >
               <input
                 type="checkbox"
                 checked={align.fitWidth}
-                onChange={(e) => updateAlign({ fitWidth: e.target.checked })}
+                onChange={(e) => {
+                  const on = e.target.checked
+                  if (on) {
+                    // Fit again as a fresh start (relative multipliers ≈ 1).
+                    updateAlign({ fitWidth: true, scaleX: 1, scaleY: 1 })
+                    return
+                  }
+                  const imgW = primaryImageWidth()
+                  if (imgW > 0) {
+                    setAlign((prev) => bakeFitWidthOff(prev, fieldWidthForAlign(), imgW))
+                  } else {
+                    updateAlign({ fitWidth: false })
+                  }
+                }}
               />
               Fit width → сетка
             </label>
             <PrecisionField
-              label="Scale"
-              title="Масштаб подложки относительно сетки (не зум сцены)"
-              value={align.scale}
-              min={0.2}
+              label="Scale X"
+              title="Горизонтальный масштаб подложки относительно сетки (не зум сцены). Ручная правка выключает Fit."
+              value={align.scaleX}
+              min={0.05}
               max={3}
               step={0.01}
               decimals={2}
-              onChange={(scale) => updateAlign({ scale })}
+              onChange={(scaleX) => updateAlign({ scaleX })}
+            />
+            <PrecisionField
+              label="Scale Y"
+              title="Вертикальный масштаб (растяжение). Если слева ровно, а справа уезжает — крутите Scale Y."
+              value={align.scaleY}
+              min={0.05}
+              max={3}
+              step={0.01}
+              decimals={2}
+              onChange={(scaleY) => updateAlign({ scaleY })}
             />
             <PrecisionField
               label="X"
@@ -570,7 +739,16 @@ export function MapEditor() {
             />
             <button
               type="button"
+              className={calibPhase ? 'is-active' : ''}
+              onClick={() => (calibPhase ? cancelTwoPointCalib() : startTwoPointCalib())}
+              title="Две точки на печатной сетке + два гекса оверлея → scaleX/Y + offset (без вращения)"
+            >
+              {calibPhase ? 'Отмена привязки' : 'Калибровка 2 точки'}
+            </button>
+            <button
+              type="button"
               onClick={() => {
+                resetCalibrationSession()
                 setAlign(DEFAULT_MAP_ALIGN)
                 setGridOpacity(0.45)
                 setViewportFit('contain')
@@ -578,12 +756,17 @@ export function MapEditor() {
             >
               Сброс
             </button>
-            <button type="button" onClick={handleSaveCalibration} title="Записать scale/offset/zoom/слой в localStorage и в JSON карты">
+            <button
+              type="button"
+              onClick={handleSaveCalibration}
+              title="Записать scaleX/Y/offset/zoom/слой в localStorage и в JSON карты"
+            >
               Сохранить калибровку
             </button>
-            <span className="size-controls__hint" title="Автосохранение при изменении; также в Скачать JSON / Save LS">
-              тяните шкалу или ± / число · калибровка → JSON / LS
-            </span>
+            <p className="align-controls__hint" role="note">
+              Если слева ровно, а справа уезжает — крути Scale Y / калибровка 2 точки.
+              Fit width — только старт; ручной Scale X/Y его выключает. Калибровка → JSON / LS.
+            </p>
           </div>
         </section>
 
@@ -639,6 +822,10 @@ export function MapEditor() {
           tool={tool}
           viewportFit={viewportFit}
           onViewportFitChange={setViewportFit}
+          calibPhase={calibPhase}
+          calibMarkers={calibMarkers}
+          onCalibMapClick={handleCalibMapClick}
+          onCalibHexClick={handleCalibHexClick}
         />
       </div>
     </div>
@@ -674,7 +861,8 @@ function loadInitialDocument(): {
       return {
         map: parsed,
         align: {
-          scale: persist.scale,
+          scaleX: persist.scaleX,
+          scaleY: persist.scaleY,
           offsetX: persist.offsetX,
           offsetY: persist.offsetY,
           fitWidth: persist.fitWidth,
@@ -698,7 +886,8 @@ function loadInitialDocument(): {
     return {
       ...fallback,
       align: {
-        scale: alignOnly.scale,
+        scaleX: alignOnly.scaleX,
+        scaleY: alignOnly.scaleY,
         offsetX: alignOnly.offsetX,
         offsetY: alignOnly.offsetY,
         fitWidth: alignOnly.fitWidth,

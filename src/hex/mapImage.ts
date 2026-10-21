@@ -25,19 +25,29 @@ export const MAP_TILE_URLS: string[] = []
 export type MapLayerMode = 'both' | 'map' | 'grid'
 
 export interface MapImageAlign {
-  /** Relative to hex-grid pixel width: 1 = fit width of the hex field. */
-  scale: number
+  /**
+   * Horizontal underlay scale vs hex field.
+   * With fitWidth: multiplier on (fieldWidth / imageWidth); without: canvas-px per image-px.
+   */
+  scaleX: number
+  /**
+   * Vertical underlay scale (independent of scaleX — fixes printed-grid aspect drift).
+   * Same units as scaleX.
+   */
+  scaleY: number
   offsetX: number
   offsetY: number
   /**
    * When true, underlay width matches hex field width (calibration vs grid).
    * Independent of viewport framing («Вся карта» / «По ширине»).
+   * Manual scaleX/Y or 2-point calib turn this off (fit is a starting point only).
    */
   fitWidth: boolean
 }
 
 export const DEFAULT_MAP_ALIGN: MapImageAlign = {
-  scale: 1,
+  scaleX: 1,
+  scaleY: 1,
   offsetX: 0,
   offsetY: 0,
   fitWidth: true,

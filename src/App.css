@@ -115,6 +115,19 @@
   color: #b8c0c8;
 }
 
+.align-controls > button.is-active {
+  border-color: #f0ead8;
+  background: rgba(240, 234, 216, 0.12);
+}
+
+.align-controls__hint {
+  flex: 1 1 100%;
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: #9aa3ab;
+}
+
 .precision-field {
   display: inline-flex;
   flex-wrap: wrap;

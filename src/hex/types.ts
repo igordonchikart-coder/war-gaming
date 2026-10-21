@@ -10,7 +10,10 @@ export type ViewportFitMode = 'contain' | 'width' | 'free'
 
 /** Persisted underlay/grid calibration (also accepted as JSON key `underlay`). */
 export interface MapAlignPersist {
-  scale: number
+  /** Horizontal scale (legacy JSON `scale` is read as scaleX=scaleY when scaleX/Y absent). */
+  scaleX: number
+  /** Vertical scale — independent to correct printed-grid aspect / cumulative drift. */
+  scaleY: number
   offsetX: number
   offsetY: number
   fitWidth: boolean

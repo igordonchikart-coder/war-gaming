@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { HEX_SIZE, effectiveUnderlayScales } from '../hex/calibrate'
 import { axialToPixel, hexCorners, pixelToAxial } from '../hex/math'
 import { getTerrain, inBounds } from '../hex/map'
 import {
@@ -14,17 +15,28 @@ import {
   type ViewportFitMode,
 } from '../hex/types'
 
-/**
- * Center-to-vertex radius (flat-top: width = 2*size, height = √3*size).
- * Tuned so fit-width underlay sits closer to Hanko pitch; nudge via size + align UI.
- */
-const HEX_SIZE = 22
 const PADDING = 24
 /** Low enough that contain-fit of a tall/wide sheet still fits small viewports. */
 const MIN_VIEW_SCALE = 0.05
 const MAX_VIEW_SCALE = 4
 
 export type CanvasTool = 'paint' | 'pan'
+
+/** 2-point underlay calibration: map clicks then matching overlay hexes. */
+export type CalibPhase = 'map1' | 'map2' | 'hex1' | 'hex2'
+
+export interface CalibMapClick {
+  /** Canvas-local coords (relative to hex origin, same as axialToPixel). */
+  x: number
+  y: number
+}
+
+export interface CalibSessionMarkers {
+  map1?: CalibMapClick | null
+  map2?: CalibMapClick | null
+  hex1?: { q: number; r: number } | null
+  hex2?: { q: number; r: number } | null
+}
 
 interface Rect {
   x: number
@@ -59,6 +71,14 @@ interface HexCanvasProps {
   viewportFit?: ViewportFitMode
   /** Fired when the user leaves an auto-fit mode (pinch / manual zoom). */
   onViewportFitChange?: (mode: ViewportFitMode) => void
+  /** Active 2-point calibration step (disables paint). */
+  calibPhase?: CalibPhase | null
+  /** Markers for in-progress calibration. */
+  calibMarkers?: CalibSessionMarkers
+  /** Printed-grid click in canvas-local space (map1 / map2). */
+  onCalibMapClick?: (point: CalibMapClick) => void
+  /** Overlay hex pick (hex1 / hex2). */
+  onCalibHexClick?: (hex: { q: number; r: number }) => void
 }
 
 function clampViewScale(n: number): number {
@@ -194,10 +214,9 @@ function underlayRect(
   let maxY = baseY
 
   for (const img of images) {
-    const fitScale = field.width / img.naturalWidth
-    const scale = align.fitWidth ? fitScale * align.scale : align.scale
-    const dw = img.naturalWidth * scale
-    const dh = img.naturalHeight * scale
+    const { sx, sy } = effectiveUnderlayScales(align, field.width, img.naturalWidth)
+    const dw = img.naturalWidth * sx
+    const dh = img.naturalHeight * sy
     minX = Math.min(minX, cursorX)
     minY = Math.min(minY, baseY)
     maxX = Math.max(maxX, cursorX + dw)
@@ -275,21 +294,61 @@ function drawMapUnderlay(
 
   // Primary image aligned to hex field; extra tiles drawn sequentially to the right.
   // Source stays at natural pixels (no preload downscale). Fit/zoom only via draw + CSS.
+  // Independent scaleX/scaleY corrects printed-grid aspect drift vs mathematical hexes.
   let cursorX = field.x + align.offsetX
   const baseY = field.y + align.offsetY
 
   for (let i = 0; i < images.length; i++) {
     const img = images[i]!
-    const fitScale = field.width / img.naturalWidth
-    const scale = align.fitWidth ? fitScale * align.scale : align.scale
-    const dw = img.naturalWidth * scale
-    const dh = img.naturalHeight * scale
+    const { sx, sy } = effectiveUnderlayScales(align, field.width, img.naturalWidth)
+    const dw = img.naturalWidth * sx
+    const dh = img.naturalHeight * sy
     // Soften only when shrinking into the hex field; keep sharp when 1:1 or upscaling.
     const shrinking = dw < img.naturalWidth - 0.5 || dh < img.naturalHeight - 0.5
     ctx.imageSmoothingEnabled = shrinking
     if (shrinking) ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(img.source, 0, 0, img.naturalWidth, img.naturalHeight, cursorX, baseY, dw, dh)
     cursorX += dw
+  }
+}
+
+function drawCalibMarkers(
+  ctx: CanvasRenderingContext2D,
+  originX: number,
+  originY: number,
+  markers: CalibSessionMarkers,
+) {
+  const drawCross = (lx: number, ly: number, color: string, label: string) => {
+    const x = lx + originX
+    const y = ly + originY
+    const arm = 10
+    ctx.strokeStyle = color
+    ctx.fillStyle = color
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(x - arm, y)
+    ctx.lineTo(x + arm, y)
+    ctx.moveTo(x, y - arm)
+    ctx.lineTo(x, y + arm)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(x, y, 4, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.font = '11px ui-monospace, monospace'
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'bottom'
+    ctx.fillText(label, x + 8, y - 6)
+  }
+
+  if (markers.map1) drawCross(markers.map1.x, markers.map1.y, '#ffb454', 'A печать')
+  if (markers.map2) drawCross(markers.map2.x, markers.map2.y, '#ffb454', 'B печать')
+  if (markers.hex1) {
+    const p = axialToPixel(markers.hex1.q, markers.hex1.r, HEX_SIZE)
+    drawCross(p.x, p.y, '#7dd3fc', `A ${markers.hex1.q},${markers.hex1.r}`)
+  }
+  if (markers.hex2) {
+    const p = axialToPixel(markers.hex2.q, markers.hex2.r, HEX_SIZE)
+    drawCross(p.x, p.y, '#7dd3fc', `B ${markers.hex2.q},${markers.hex2.r}`)
   }
 }
 
@@ -318,13 +377,17 @@ export function HexCanvas({
   onPaint,
   mapImages = [],
   layerMode = 'both',
-  align = { scale: 1, offsetX: 0, offsetY: 0, fitWidth: true },
+  align = { scaleX: 1, scaleY: 1, offsetX: 0, offsetY: 0, fitWidth: true },
   gridOpacity = 0.45,
   viewScale: viewScaleProp,
   onViewScaleChange,
   tool = 'paint',
   viewportFit = 'contain',
   onViewportFitChange,
+  calibPhase = null,
+  calibMarkers,
+  onCalibMapClick,
+  onCalibHexClick,
 }: HexCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -453,7 +516,8 @@ export function HexCanvas({
     map.width,
     map.height,
     mapImages,
-    align.scale,
+    align.scaleX,
+    align.scaleY,
     align.offsetX,
     align.offsetY,
     align.fitWidth,
@@ -512,10 +576,25 @@ export function HexCanvas({
     }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    if (hover) {
+    if (calibMarkers && calibPhase) {
+      drawCalibMarkers(ctx, layout.originX, layout.originY, calibMarkers)
+    }
+    if (hover && !calibPhase) {
       drawHoverOutline(ctx, map, hover, layout.originX, layout.originY)
     }
-  }, [map, hover, layout, mapImages, layerMode, align, gridOpacity, showMap, showGrid])
+  }, [
+    map,
+    hover,
+    layout,
+    mapImages,
+    layerMode,
+    align,
+    gridOpacity,
+    showMap,
+    showGrid,
+    calibMarkers,
+    calibPhase,
+  ])
 
   /** Zoom whole scene (underlay + grid) keeping the point under the cursor fixed. */
   function zoomTo(clientX: number, clientY: number, nextScale: number) {
@@ -679,15 +758,22 @@ export function HexCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, [layout.width, layout.height])
 
-  function eventToHex(e: { clientX: number; clientY: number }): { q: number; r: number } | null {
+  /** Canvas-local point (relative to hex origin), accounting for CSS view zoom. */
+  function eventToLocal(e: { clientX: number; clientY: number }): CalibMapClick | null {
     const canvas = canvasRef.current
     if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
     if (rect.width <= 0 || rect.height <= 0) return null
-    // Map through CSS scale so paint/hit-test stay aligned with the zoomed scene.
-    const x = ((e.clientX - rect.left) / rect.width) * layout.width - layout.originX
-    const y = ((e.clientY - rect.top) / rect.height) * layout.height - layout.originY
-    const hex = pixelToAxial(x, y, HEX_SIZE)
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * layout.width - layout.originX,
+      y: ((e.clientY - rect.top) / rect.height) * layout.height - layout.originY,
+    }
+  }
+
+  function eventToHex(e: { clientX: number; clientY: number }): { q: number; r: number } | null {
+    const local = eventToLocal(e)
+    if (!local) return null
+    const hex = pixelToAxial(local.x, local.y, HEX_SIZE)
     if (!inBounds(map, hex.q, hex.r)) return null
     return hex
   }
@@ -714,7 +800,21 @@ export function HexCanvas({
       canvasRef.current?.setPointerCapture(e.pointerId)
       return
     }
-    if (e.button !== 0 || tool !== 'paint') return
+    if (e.button !== 0) return
+
+    // 2-point calibration: map clicks (any spot) then overlay hex picks.
+    if (calibPhase === 'map1' || calibPhase === 'map2') {
+      const local = eventToLocal(e)
+      if (local) onCalibMapClick?.(local)
+      return
+    }
+    if (calibPhase === 'hex1' || calibPhase === 'hex2') {
+      const hex = eventToHex(e)
+      if (hex) onCalibHexClick?.(hex)
+      return
+    }
+
+    if (tool !== 'paint') return
     paintingRef.current = true
     paintAt(e)
   }
@@ -727,8 +827,8 @@ export function HexCanvas({
       pan.lastY = e.clientY
       return
     }
-    if (tool !== 'paint' || spaceHeldRef.current) {
-      onHover(null)
+    if (calibPhase || tool !== 'paint' || spaceHeldRef.current) {
+      onHover(calibPhase && (calibPhase === 'hex1' || calibPhase === 'hex2') ? eventToHex(e) : null)
       return
     }
     const hex = eventToHex(e)
@@ -751,7 +851,24 @@ export function HexCanvas({
     paintingRef.current = false
   }
 
-  const cursor = panning ? 'grabbing' : wantPanCursor ? 'grab' : 'crosshair'
+  const cursor = panning
+    ? 'grabbing'
+    : wantPanCursor
+      ? 'grab'
+      : calibPhase
+        ? 'crosshair'
+        : 'crosshair'
+
+  const calibTitle =
+    calibPhase === 'map1'
+      ? 'Калибровка: кликните центр печатного гекса A (далеко слева/снизу)'
+      : calibPhase === 'map2'
+        ? 'Калибровка: кликните центр печатного гекса B (далеко справа/сверху)'
+        : calibPhase === 'hex1'
+          ? 'Калибровка: кликните соответствующий гекс оверлея A'
+          : calibPhase === 'hex2'
+            ? 'Калибровка: кликните соответствующий гекс оверлея B'
+            : null
 
   return (
     <div ref={viewportRef} className="hex-viewport" aria-label="Область карты">
@@ -797,9 +914,10 @@ export function HexCanvas({
             if (tool === 'pan' || spaceHeldRef.current) e.preventDefault()
           }}
           title={
-            tool === 'pan' || spaceHeld
+            calibTitle ??
+            (tool === 'pan' || spaceHeld
               ? 'Рука: перетащите карту'
-              : `Кисть: ${selectedTerrain} · Space/СКМ — pan · щипок — зум`
+              : `Кисть: ${selectedTerrain} · Space/СКМ — pan · щипок — зум`)
           }
         />
       </div>

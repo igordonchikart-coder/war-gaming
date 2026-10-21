@@ -16,13 +16,16 @@ const VIEWPORT_FITS = new Set<ViewportFitMode>(['contain', 'width', 'free'])
 export function parseMapAlign(raw: unknown): MapAlignPersist | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const obj = raw as Record<string, unknown>
-  const scale = Number(obj.scale)
   const offsetX = Number(obj.offsetX)
   const offsetY = Number(obj.offsetY)
-  if (![scale, offsetX, offsetY].every(Number.isFinite)) return undefined
+  // Prefer scaleX/scaleY; fall back to legacy uniform `scale`.
+  const legacyScale = obj.scale !== undefined ? Number(obj.scale) : NaN
+  const scaleX = obj.scaleX !== undefined ? Number(obj.scaleX) : legacyScale
+  const scaleY = obj.scaleY !== undefined ? Number(obj.scaleY) : legacyScale
+  if (![scaleX, scaleY, offsetX, offsetY].every(Number.isFinite)) return undefined
 
   const fitWidth = obj.fitWidth === undefined ? true : Boolean(obj.fitWidth)
-  const result: MapAlignPersist = { scale, offsetX, offsetY, fitWidth }
+  const result: MapAlignPersist = { scaleX, scaleY, offsetX, offsetY, fitWidth }
 
   if (obj.viewZoom !== undefined) {
     const viewZoom = Number(obj.viewZoom)
