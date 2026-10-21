@@ -35,6 +35,36 @@ export function parseMapAlign(raw: unknown): MapAlignPersist | undefined {
     const shearY = Number(obj.shearY)
     if (Number.isFinite(shearY)) result.shearY = shearY
   }
+  if (Array.isArray(obj.perspective) && obj.perspective.length === 9) {
+    const perspective = obj.perspective.map(Number)
+    if (perspective.every(Number.isFinite)) result.perspective = perspective
+  }
+  if (Array.isArray(obj.perspectiveInv) && obj.perspectiveInv.length === 9) {
+    const perspectiveInv = obj.perspectiveInv.map(Number)
+    if (perspectiveInv.every(Number.isFinite)) result.perspectiveInv = perspectiveInv
+  }
+  if (obj.warpMesh && typeof obj.warpMesh === 'object') {
+    const wm = obj.warpMesh as Record<string, unknown>
+    const cols = Number(wm.cols)
+    const rows = Number(wm.rows)
+    if (
+      Number.isFinite(cols) &&
+      Number.isFinite(rows) &&
+      cols >= 2 &&
+      rows >= 2 &&
+      Array.isArray(wm.src) &&
+      Array.isArray(wm.dst) &&
+      wm.src.length >= cols * rows * 2 &&
+      wm.dst.length >= cols * rows * 2
+    ) {
+      result.warpMesh = {
+        cols,
+        rows,
+        src: (wm.src as unknown[]).map(Number),
+        dst: (wm.dst as unknown[]).map(Number),
+      }
+    }
+  }
 
   if (obj.viewZoom !== undefined) {
     const viewZoom = Number(obj.viewZoom)

@@ -20,6 +20,16 @@ export interface MapAlignPersist {
   shearX?: number
   /** Optional affine shear (canvas Δy from image x). */
   shearY?: number
+  /** 3×3 row-major homography image→hex-local. */
+  perspective?: number[]
+  perspectiveInv?: number[]
+  /** TPS/mesh warp (preferred): image control pts → hex-local. */
+  warpMesh?: {
+    cols: number
+    rows: number
+    src: number[]
+    dst: number[]
+  }
   fitWidth: boolean
   /** Scene zoom from pinch / ctrl+wheel. */
   viewZoom?: number
@@ -71,10 +81,15 @@ export const WARN_MAP_SIZE = 200
 export const LABEL_CELL_LIMIT = 2500
 /**
  * Bump when shipped absolute auto-calibration changes so stale localStorage
- * (e.g. old fitWidth Scale≈0.96 / offset≈33) cannot override new defaults.
+ * (e.g. old fitWidth Scale≈0.96 / offset≈33, or pre-TPS shear) cannot override.
  */
-export const STORAGE_KEY = 'war-gaming-map-v2'
+export const STORAGE_KEY = 'war-gaming-map-v3'
 /** Separate key for last calibration snapshot (mirrors mapAlign in the map JSON). */
-export const ALIGN_STORAGE_KEY = 'war-gaming-map-align-v2'
-/** Legacy keys — cleared on autocalibrate / first load of v2. */
-export const LEGACY_STORAGE_KEYS = ['war-gaming-map-v1', 'war-gaming-map-align-v1'] as const
+export const ALIGN_STORAGE_KEY = 'war-gaming-map-align-v3'
+/** Legacy keys — cleared on autocalibrate / first load of v3. */
+export const LEGACY_STORAGE_KEYS = [
+  'war-gaming-map-v1',
+  'war-gaming-map-align-v1',
+  'war-gaming-map-v2',
+  'war-gaming-map-align-v2',
+] as const

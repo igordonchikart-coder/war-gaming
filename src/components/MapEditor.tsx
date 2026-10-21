@@ -24,7 +24,6 @@ import {
   suggestGridSizeForUnderlay,
 } from '../hex/map'
 import {
-  DEFAULT_MAP_ALIGN,
   loadMapImagesProgressive,
   type LoadedMapImage,
   type MapImageAlign,
@@ -88,11 +87,29 @@ function buildMapAlign(
     offsetY: align.offsetY,
     shearX: align.shearX ?? 0,
     shearY: align.shearY ?? 0,
+    ...(align.perspective ? { perspective: align.perspective } : {}),
+    ...(align.perspectiveInv ? { perspectiveInv: align.perspectiveInv } : {}),
+    ...(align.warpMesh ? { warpMesh: align.warpMesh } : {}),
     fitWidth: align.fitWidth,
     viewZoom,
     viewportFit,
     layerMode,
     gridOpacity,
+  }
+}
+
+function alignFromPersist(persist: MapAlignPersist): MapImageAlign {
+  return {
+    scaleX: persist.scaleX,
+    scaleY: persist.scaleY,
+    offsetX: persist.offsetX,
+    offsetY: persist.offsetY,
+    shearX: persist.shearX ?? 0,
+    shearY: persist.shearY ?? 0,
+    ...(persist.perspective ? { perspective: persist.perspective } : {}),
+    ...(persist.perspectiveInv ? { perspectiveInv: persist.perspectiveInv } : {}),
+    ...(persist.warpMesh ? { warpMesh: persist.warpMesh } : {}),
+    fitWidth: persist.fitWidth,
   }
 }
 
@@ -130,15 +147,7 @@ function applyMapAlignToState(
   },
 ) {
   if (!persist) return
-  setters.setAlign({
-    scaleX: persist.scaleX,
-    scaleY: persist.scaleY,
-    offsetX: persist.offsetX,
-    offsetY: persist.offsetY,
-    shearX: persist.shearX ?? 0,
-    shearY: persist.shearY ?? 0,
-    fitWidth: persist.fitWidth,
-  })
+  setters.setAlign(alignFromPersist(persist))
   // Default to contain so old saves still show the full sheet on load.
   setters.setViewportFit(persist.viewportFit ?? 'contain')
   if (persist.viewportFit === 'free' && persist.viewZoom !== undefined) {
@@ -836,9 +845,8 @@ export function MapEditor() {
               Сохранить калибровку
             </button>
             <p className="align-controls__hint" role="note">
-              Один клик: «Автокалибровка» (или Load <code>public/map/map-align-autocal.json</code>).
-              Погрешность ≈0.15 гекса — дальние углы дожмите «Калибровка 2 точки» / Scale Y.
-              Fit width — только грубый старт; ручной Scale его выключает.
+              Один клик: «Автокалибровка» — TPS-варп подложки на идеальную flat-top сетку
+              (8 якорей, LS v3). Или Load <code>public/map/map-align-autocal.json</code>.
             </p>
           </div>
         </section>
@@ -917,7 +925,7 @@ function loadInitialDocument(): {
 
   const fallback = {
     map: createEmptyMap(),
-    align: { ...DEFAULT_MAP_ALIGN },
+    align: { ...AUTO_CALIBRATION },
     viewZoom: 1,
     viewportFit: 'contain' as ViewportFitMode,
     layerMode: 'both' as MapLayerMode,
@@ -935,15 +943,7 @@ function loadInitialDocument(): {
       const viewportFit: ViewportFitMode = persist.viewportFit ?? 'contain'
       return {
         map: parsed,
-        align: {
-          scaleX: persist.scaleX,
-          scaleY: persist.scaleY,
-          offsetX: persist.offsetX,
-          offsetY: persist.offsetY,
-          shearX: persist.shearX ?? 0,
-          shearY: persist.shearY ?? 0,
-          fitWidth: persist.fitWidth,
-        },
+        align: alignFromPersist(persist),
         viewZoom:
           viewportFit === 'free' && persist.viewZoom !== undefined
             ? clampViewZoom(persist.viewZoom)
@@ -962,15 +962,7 @@ function loadInitialDocument(): {
     const viewportFit: ViewportFitMode = alignOnly.viewportFit ?? 'contain'
     return {
       ...fallback,
-      align: {
-        scaleX: alignOnly.scaleX,
-        scaleY: alignOnly.scaleY,
-        offsetX: alignOnly.offsetX,
-        offsetY: alignOnly.offsetY,
-        shearX: alignOnly.shearX ?? 0,
-        shearY: alignOnly.shearY ?? 0,
-        fitWidth: alignOnly.fitWidth,
-      },
+      align: alignFromPersist(alignOnly),
       viewZoom:
         viewportFit === 'free' && alignOnly.viewZoom !== undefined
           ? clampViewZoom(alignOnly.viewZoom)

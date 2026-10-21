@@ -37,7 +37,7 @@ export interface MapImageAlign {
   scaleY: number
   offsetX: number
   offsetY: number
-  /**
+/**
    * Affine shear: canvas Δx from image y (`local_x += shearX * iy`).
    * Corrects mild scan tilt / non-orthogonal printed grid.
    */
@@ -46,6 +46,25 @@ export interface MapImageAlign {
    * Affine shear: canvas Δy from image x (`local_y += shearY * ix`).
    */
   shearY?: number
+  /**
+   * 3×3 row-major homography: image px → hex-local (axialToPixel space).
+   * Used when `warpMesh` is absent; Canvas draws a subdivided approximation.
+   */
+  perspective?: number[]
+  /**
+   * Inverse of `perspective` (hex-local → image). Optional; for 2-point calib.
+   */
+  perspectiveInv?: number[]
+  /**
+   * Baked TPS/mesh warp: image control points → hex-local. Preferred over
+   * affine/perspective when present (pins corners + mids + center).
+   */
+  warpMesh?: {
+    cols: number
+    rows: number
+    src: number[]
+    dst: number[]
+  }
   /**
    * When true, underlay width matches hex field width (calibration vs grid).
    * Independent of viewport framing («Вся карта» / «По ширине»).
@@ -60,12 +79,12 @@ export interface MapImageAlign {
  * Fit-width start is off: absolute canvas-px / image-px scales.
  */
 export const DEFAULT_MAP_ALIGN: MapImageAlign = {
-  scaleX: 0.20245399,
-  scaleY: 0.20322729,
-  offsetX: -62.625767,
-  offsetY: -58.884463,
-  shearX: -0.00035,
-  shearY: 0.00085,
+  scaleX: 0.2071352744006969,
+  scaleY: 0.21006707868221847,
+  offsetX: -66.7056773169919,
+  offsetY: -63.210532755200916,
+  shearX: -3.1477003166301934e-10,
+  shearY: 4.847403493297244e-06,
   fitWidth: false,
 }
 

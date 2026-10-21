@@ -7,6 +7,7 @@ import {
   type MapImageAlign,
   type MapLayerMode,
 } from '../hex/mapImage'
+import { drawWarpedImage, isWarpMesh, meshFromPerspective } from '../hex/warp'
 import {
   LABEL_CELL_LIMIT,
   TERRAIN_COLORS,
@@ -206,6 +207,34 @@ function underlayRect(
 ): Rect | null {
   if (images.length === 0) return null
 
+  // Mesh/perspective maps image → hex-local; drawn around the hex field origin.
+  if (
+    isWarpMesh(align.warpMesh) ||
+    (Array.isArray(align.perspective) && align.perspective.length === 9)
+  ) {
+    const mesh = isWarpMesh(align.warpMesh)
+      ? align.warpMesh
+      : meshFromPerspective(
+          align.perspective!,
+          images[0]!.naturalWidth,
+          images[0]!.naturalHeight,
+        )
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (let i = 0; i < mesh.dst.length; i += 2) {
+      const x = field.x + HEX_SIZE + mesh.dst[i]!
+      const y = field.y + HEX_SIZE + mesh.dst[i + 1]!
+      minX = Math.min(minX, x)
+      minY = Math.min(minY, y)
+      maxX = Math.max(maxX, x)
+      maxY = Math.max(maxY, y)
+    }
+    if (!Number.isFinite(minX)) return { ...field }
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+  }
+
   let cursorX = field.x + align.offsetX
   const baseY = field.y + align.offsetY
   let minX = cursorX
@@ -292,9 +321,29 @@ function drawMapUnderlay(
 ) {
   if (images.length === 0) return
 
-  // Primary image aligned to hex field; extra tiles drawn sequentially to the right.
-  // Source stays at natural pixels (no preload downscale). Fit/zoom only via draw + CSS.
-  // Independent scaleX/scaleY + optional shearX/shearY (affine) vs printed-grid drift.
+  // Primary image: prefer TPS/perspective mesh (image → hex-local), else affine.
+  // Hex-local (0,0) is drawn at (field.x + HEX_SIZE, field.y + HEX_SIZE).
+  const originX = field.x + HEX_SIZE
+  const originY = field.y + HEX_SIZE
+  const primary = images[0]!
+  const mesh = isWarpMesh(align.warpMesh)
+    ? align.warpMesh
+    : Array.isArray(align.perspective) && align.perspective.length === 9
+      ? meshFromPerspective(
+          align.perspective,
+          primary.naturalWidth,
+          primary.naturalHeight,
+        )
+      : null
+
+  if (mesh) {
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    drawWarpedImage(ctx, primary.source, mesh, originX, originY)
+    return
+  }
+
+  // Affine fallback: independent scaleX/scaleY + optional shearX/shearY.
   const shearX = align.shearX ?? 0
   const shearY = align.shearY ?? 0
   let cursorX = field.x + align.offsetX
@@ -305,15 +354,11 @@ function drawMapUnderlay(
     const { sx, sy } = effectiveUnderlayScales(align, field.width, img.naturalWidth)
     const dw = img.naturalWidth * sx
     const dh = img.naturalHeight * sy
-    // Soften only when shrinking into the hex field; keep sharp when 1:1 or upscaling.
     const shrinking = dw < img.naturalWidth - 0.5 || dh < img.naturalHeight - 0.5
     ctx.imageSmoothingEnabled = shrinking
     if (shrinking) ctx.imageSmoothingQuality = 'high'
 
     if (shearX !== 0 || shearY !== 0) {
-      // Multiply into current CTM (keeps DPR / scene scale): 
-      // x' = sx*ix + shearX*iy + cursorX; y' = shearY*ix + sy*iy + baseY
-      // transform(a,b,c,d,e,f): x' = a*x + c*y + e; y' = b*x + d*y + f
       ctx.save()
       ctx.transform(sx, shearY, shearX, sy, cursorX, baseY)
       ctx.drawImage(img.source, 0, 0)
@@ -536,6 +581,8 @@ export function HexCanvas({
     align.shearX,
     align.shearY,
     align.fitWidth,
+    align.perspective,
+    align.warpMesh,
   ])
 
   // Rebuild static scene cache when map / underlay / layers change (not on hover).
