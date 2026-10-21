@@ -5,9 +5,11 @@ import {
   type MapAlignPersist,
   type MapData,
   type Terrain,
+  type ViewportFitMode,
 } from './types'
 
 const LAYER_MODES = new Set(['both', 'map', 'grid'])
+const VIEWPORT_FITS = new Set<ViewportFitMode>(['contain', 'width', 'free'])
 
 /** Parse optional `mapAlign` / `underlay` block from a map JSON object. */
 export function parseMapAlign(raw: unknown): MapAlignPersist | undefined {
@@ -24,6 +26,9 @@ export function parseMapAlign(raw: unknown): MapAlignPersist | undefined {
   if (obj.viewZoom !== undefined) {
     const viewZoom = Number(obj.viewZoom)
     if (Number.isFinite(viewZoom)) result.viewZoom = viewZoom
+  }
+  if (typeof obj.viewportFit === 'string' && VIEWPORT_FITS.has(obj.viewportFit as ViewportFitMode)) {
+    result.viewportFit = obj.viewportFit as ViewportFitMode
   }
   if (typeof obj.layerMode === 'string' && LAYER_MODES.has(obj.layerMode)) {
     result.layerMode = obj.layerMode as MapAlignPersist['layerMode']

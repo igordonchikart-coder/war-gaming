@@ -6,7 +6,7 @@ import {
   type MapImageAlign,
   type MapLayerMode,
 } from '../hex/mapImage'
-import { TERRAIN_COLORS, type MapData, type Terrain } from '../hex/types'
+import { TERRAIN_COLORS, type MapData, type Terrain, type ViewportFitMode } from '../hex/types'
 
 /**
  * Center-to-vertex radius (flat-top: width = 2*size, height = √3*size).
@@ -15,10 +15,18 @@ import { TERRAIN_COLORS, type MapData, type Terrain } from '../hex/types'
  */
 const HEX_SIZE = 22
 const PADDING = 24
-const MIN_VIEW_SCALE = 0.25
+/** Low enough that contain-fit of a tall/wide sheet still fits small viewports. */
+const MIN_VIEW_SCALE = 0.05
 const MAX_VIEW_SCALE = 4
 
 export type CanvasTool = 'paint' | 'pan'
+
+interface Rect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 interface HexCanvasProps {
   map: MapData
@@ -38,10 +46,14 @@ interface HexCanvasProps {
   /** Active tool: paint brush or hand (pan). */
   tool?: CanvasTool
   /**
-   * When true with align.fitWidth, scene zoom is set so map width matches
-   * the viewport (recalculated on resize).
+   * Viewport framing of the map sheet:
+   * - contain: entire underlay (or scene) visible, letterbox if needed
+   * - width: fit underlay/scene width to viewport
+   * - free: manual zoom (pinch / slider); no auto-refit on resize
    */
-  fitViewportWidth?: boolean
+  viewportFit?: ViewportFitMode
+  /** Fired when the user leaves an auto-fit mode (pinch / manual zoom). */
+  onViewportFitChange?: (mode: ViewportFitMode) => void
 }
 
 function clampViewScale(n: number): number {
@@ -81,7 +93,7 @@ function hexFieldBounds(
   map: MapData,
   originX: number,
   originY: number,
-): { x: number; y: number; width: number; height: number } {
+): Rect {
   let minX = Infinity
   let maxX = -Infinity
   let minY = Infinity
@@ -102,10 +114,97 @@ function hexFieldBounds(
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
+/** Pixel rect of the drawn underlay (may extend past the hex field). */
+function underlayRect(
+  images: LoadedMapImage[],
+  field: Rect,
+  align: MapImageAlign,
+): Rect | null {
+  if (images.length === 0) return null
+
+  let cursorX = field.x + align.offsetX
+  const baseY = field.y + align.offsetY
+  let minX = cursorX
+  let minY = baseY
+  let maxX = cursorX
+  let maxY = baseY
+
+  for (const img of images) {
+    const fitScale = field.width / img.naturalWidth
+    const scale = align.fitWidth ? fitScale * align.scale : align.scale
+    const dw = img.naturalWidth * scale
+    const dh = img.naturalHeight * scale
+    minX = Math.min(minX, cursorX)
+    minY = Math.min(minY, baseY)
+    maxX = Math.max(maxX, cursorX + dw)
+    maxY = Math.max(maxY, baseY + dh)
+    cursorX += dw
+  }
+
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+/**
+ * Scene = hex bitmap ∪ underlay. Expands/shifts so the full map sheet is on-canvas
+ * even when art is larger than the hex grid or offset outside it.
+ */
+function computeSceneLayout(
+  map: MapData,
+  images: LoadedMapImage[],
+  align: MapImageAlign,
+): {
+  width: number
+  height: number
+  originX: number
+  originY: number
+  field: Rect
+  underlay: Rect | null
+} {
+  const hex = mapPixelSize(map)
+  const field = hexFieldBounds(map, hex.originX, hex.originY)
+  const underlay = underlayRect(images, field, align)
+
+  let minX = 0
+  let minY = 0
+  let maxX = hex.width
+  let maxY = hex.height
+
+  if (underlay) {
+    minX = Math.min(minX, underlay.x)
+    minY = Math.min(minY, underlay.y)
+    maxX = Math.max(maxX, underlay.x + underlay.width)
+    maxY = Math.max(maxY, underlay.y + underlay.height)
+  }
+
+  const shiftX = -minX
+  const shiftY = -minY
+
+  return {
+    width: maxX - minX,
+    height: maxY - minY,
+    originX: hex.originX + shiftX,
+    originY: hex.originY + shiftY,
+    field: {
+      x: field.x + shiftX,
+      y: field.y + shiftY,
+      width: field.width,
+      height: field.height,
+    },
+    underlay: underlay
+      ? {
+          x: underlay.x + shiftX,
+          y: underlay.y + shiftY,
+          width: underlay.width,
+          height: underlay.height,
+        }
+      : null,
+  }
+}
+
 function drawMapUnderlay(
   ctx: CanvasRenderingContext2D,
   images: LoadedMapImage[],
-  field: { x: number; y: number; width: number; height: number },
+  field: Rect,
   align: MapImageAlign,
 ) {
   if (images.length === 0) return
@@ -140,6 +239,13 @@ function touchMidpoint(a: Touch, b: Touch): { x: number; y: number } {
   return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
 }
 
+function clampScroll(viewport: HTMLElement, left: number, top: number) {
+  const maxLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth)
+  const maxTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+  viewport.scrollLeft = Math.min(maxLeft, Math.max(0, left))
+  viewport.scrollTop = Math.min(maxTop, Math.max(0, top))
+}
+
 export function HexCanvas({
   map,
   selectedTerrain,
@@ -153,7 +259,8 @@ export function HexCanvas({
   viewScale: viewScaleProp,
   onViewScaleChange,
   tool = 'paint',
-  fitViewportWidth = true,
+  viewportFit = 'contain',
+  onViewportFitChange,
 }: HexCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -161,6 +268,7 @@ export function HexCanvas({
   const paintingRef = useRef(false)
   const viewScaleRef = useRef(1)
   const spaceHeldRef = useRef(false)
+  const viewportFitRef = useRef(viewportFit)
   const panRef = useRef<{
     pointerId: number
     lastX: number
@@ -176,14 +284,25 @@ export function HexCanvas({
   const [spaceHeld, setSpaceHeld] = useState(false)
   const [panning, setPanning] = useState(false)
   const viewScale = viewScaleProp ?? internalViewScale
-  const layout = mapPixelSize(map)
+  const layout = computeSceneLayout(map, mapImages, align)
   const showMap = layerMode === 'map' || layerMode === 'both'
   const showGrid = layerMode === 'grid' || layerMode === 'both'
   const wantPanCursor = tool === 'pan' || spaceHeld || panning
+  /** Prefer the map sheet rect for framing; fall back to full scene. */
+  const fitTarget: Rect = layout.underlay ?? {
+    x: 0,
+    y: 0,
+    width: layout.width,
+    height: layout.height,
+  }
 
   useEffect(() => {
     viewScaleRef.current = viewScale
   }, [viewScale])
+
+  useEffect(() => {
+    viewportFitRef.current = viewportFit
+  }, [viewportFit])
 
   function setViewScale(next: number) {
     const clamped = clampViewScale(next)
@@ -192,31 +311,87 @@ export function HexCanvas({
     onViewScaleChange?.(clamped)
   }
 
-  /** Fit scene so map width matches the viewport content box. */
-  function fitToViewportWidth() {
-    const viewport = viewportRef.current
-    if (!viewport || layout.width <= 0) return
-    const next = clampViewScale(viewport.clientWidth / layout.width)
-    if (Math.abs(next - viewScaleRef.current) < 1e-4) return
-    setViewScale(next)
+  function markFreeFit() {
+    if (viewportFitRef.current === 'free') return
+    viewportFitRef.current = 'free'
+    onViewportFitChange?.('free')
   }
 
-  // Fit width → scene fills canvas area; recalc on resize / map size change.
+  /** Scroll so `target` is centered in the viewport at the current scale. */
+  function centerTargetInViewport(target: Rect, scale: number) {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const scaledW = target.width * scale
+    const scaledH = target.height * scale
+    const left = target.x * scale - (viewport.clientWidth - scaledW) / 2
+    const top = target.y * scale - (viewport.clientHeight - scaledH) / 2
+    clampScroll(viewport, left, top)
+  }
+
+  /** Fit entire map sheet into the viewport (contain / letterbox). */
+  function fitContain() {
+    const viewport = viewportRef.current
+    if (!viewport || fitTarget.width <= 0 || fitTarget.height <= 0) return
+    const next = clampViewScale(
+      Math.min(viewport.clientWidth / fitTarget.width, viewport.clientHeight / fitTarget.height),
+    )
+    setViewScale(next)
+    requestAnimationFrame(() => centerTargetInViewport(fitTarget, next))
+  }
+
+  /** Fit map sheet width to the viewport (height may require scroll). */
+  function fitWidth() {
+    const viewport = viewportRef.current
+    if (!viewport || fitTarget.width <= 0) return
+    const next = clampViewScale(viewport.clientWidth / fitTarget.width)
+    setViewScale(next)
+    requestAnimationFrame(() => {
+      const viewportNow = viewportRef.current
+      if (!viewportNow) return
+      // Keep horizontal framing on the sheet; vertical: show top of sheet.
+      const left = fitTarget.x * next - (viewportNow.clientWidth - fitTarget.width * next) / 2
+      const top = fitTarget.y * next
+      clampScroll(viewportNow, left, top)
+    })
+  }
+
+  function applyViewportFit(mode: ViewportFitMode) {
+    if (mode === 'contain') fitContain()
+    else if (mode === 'width') fitWidth()
+  }
+
+  // Auto-fit contain/width on resize, map size, underlay load, or mode change.
   useEffect(() => {
-    if (!fitViewportWidth || !align.fitWidth) return
+    if (viewportFit === 'free') return
     const viewport = viewportRef.current
     if (!viewport) return
 
-    fitToViewportWidth()
+    applyViewportFit(viewportFit)
 
     const ro = new ResizeObserver(() => {
-      fitToViewportWidth()
+      if (viewportFitRef.current === 'free') return
+      applyViewportFit(viewportFitRef.current)
     })
     ro.observe(viewport)
     return () => ro.disconnect()
-    // layout.width / fitWidth gate the effect; fit reads viewport live.
+    // layout + images gate re-fit; apply reads live viewport / fitTarget.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
-  }, [fitViewportWidth, align.fitWidth, layout.width, map.width, map.height])
+  }, [
+    viewportFit,
+    layout.width,
+    layout.height,
+    fitTarget.width,
+    fitTarget.height,
+    fitTarget.x,
+    fitTarget.y,
+    map.width,
+    map.height,
+    mapImages,
+    align.scale,
+    align.offsetX,
+    align.offsetY,
+    align.fitWidth,
+  ])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -234,10 +409,8 @@ export function HexCanvas({
     ctx.fillStyle = '#1a1f24'
     ctx.fillRect(0, 0, layout.width, layout.height)
 
-    const field = hexFieldBounds(map, layout.originX, layout.originY)
-
     if (showMap && mapImages.length > 0) {
-      drawMapUnderlay(ctx, mapImages, field, align)
+      drawMapUnderlay(ctx, mapImages, layout.field, align)
     }
 
     if (showGrid) {
@@ -310,6 +483,8 @@ export function HexCanvas({
     const clamped = clampViewScale(nextScale)
     if (!spacer || !viewport || Math.abs(clamped - oldScale) < 1e-6) return
 
+    markFreeFit()
+
     const spacerRect = spacer.getBoundingClientRect()
     const parentRect = viewport.getBoundingClientRect()
     const offsetX = clientX - spacerRect.left
@@ -322,14 +497,14 @@ export function HexCanvas({
     requestAnimationFrame(() => {
       const newLeft = spacer.offsetLeft + contentX * clamped - (clientX - parentRect.left)
       const newTop = spacer.offsetTop + contentY * clamped - (clientY - parentRect.top)
-      viewport.scrollLeft = Math.max(0, newLeft)
-      viewport.scrollTop = Math.max(0, newTop)
+      clampScroll(viewport, newLeft, newTop)
     })
   }
 
   function panBy(dx: number, dy: number) {
     const viewport = viewportRef.current
     if (!viewport) return
+    // Native scroll already clamps to spacer bounds (= full scene including underlay).
     viewport.scrollLeft -= dx
     viewport.scrollTop -= dy
   }

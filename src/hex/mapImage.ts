@@ -29,7 +29,10 @@ export interface MapImageAlign {
   scale: number
   offsetX: number
   offsetY: number
-  /** When true, scale is derived so image width matches hex field width. */
+  /**
+   * When true, underlay width matches hex field width (calibration vs grid).
+   * Independent of viewport framing («Вся карта» / «По ширине»).
+   */
   fitWidth: boolean
 }
 

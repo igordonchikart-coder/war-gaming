@@ -26,6 +26,7 @@ import {
   type MapAlignPersist,
   type MapData,
   type Terrain,
+  type ViewportFitMode,
 } from '../hex/types'
 import { HexCanvas, MAX_VIEW_SCALE, MIN_VIEW_SCALE, type CanvasTool } from './HexCanvas'
 import { PrecisionField } from './PrecisionField'
@@ -52,6 +53,7 @@ function buildMapAlign(
   viewZoom: number,
   layerMode: MapLayerMode,
   gridOpacity: number,
+  viewportFit: ViewportFitMode,
 ): MapAlignPersist {
   return {
     scale: align.scale,
@@ -59,6 +61,7 @@ function buildMapAlign(
     offsetY: align.offsetY,
     fitWidth: align.fitWidth,
     viewZoom,
+    viewportFit,
     layerMode,
     gridOpacity,
   }
@@ -70,10 +73,11 @@ function mapWithAlign(
   viewZoom: number,
   layerMode: MapLayerMode,
   gridOpacity: number,
+  viewportFit: ViewportFitMode,
 ): MapData {
   return {
     ...map,
-    mapAlign: buildMapAlign(align, viewZoom, layerMode, gridOpacity),
+    mapAlign: buildMapAlign(align, viewZoom, layerMode, gridOpacity, viewportFit),
   }
 }
 
@@ -84,6 +88,7 @@ function applyMapAlignToState(
     setViewScale: (n: number) => void
     setLayerMode: (m: MapLayerMode) => void
     setGridOpacity: (n: number) => void
+    setViewportFit: (m: ViewportFitMode) => void
   },
 ) {
   if (!persist) return
@@ -93,7 +98,9 @@ function applyMapAlignToState(
     offsetY: persist.offsetY,
     fitWidth: persist.fitWidth,
   })
-  if (persist.viewZoom !== undefined) {
+  // Default to contain so old saves still show the full sheet on load.
+  setters.setViewportFit(persist.viewportFit ?? 'contain')
+  if (persist.viewportFit === 'free' && persist.viewZoom !== undefined) {
     setters.setViewScale(clampViewZoom(persist.viewZoom))
   }
   if (persist.layerMode) setters.setLayerMode(persist.layerMode)
@@ -123,6 +130,7 @@ export function MapEditor() {
   const [gridOpacity, setGridOpacity] = useState(initial.gridOpacity)
   const [mapImages, setMapImages] = useState<LoadedMapImage[]>([])
   const [viewScale, setViewScale] = useState(initial.viewZoom)
+  const [viewportFit, setViewportFit] = useState<ViewportFitMode>(initial.viewportFit)
   const [tool, setTool] = useState<CanvasTool>('paint')
   /** Optional GPU-friendly downscale; default is full master quality. */
   const [fastUnderlay, setFastUnderlay] = useState(false)
@@ -180,7 +188,7 @@ export function MapEditor() {
       return
     }
     const timer = window.setTimeout(() => {
-      const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity)
+      const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity, viewportFit)
       try {
         localStorage.setItem(STORAGE_KEY, serializeMap(doc))
         localStorage.setItem(ALIGN_STORAGE_KEY, JSON.stringify(doc.mapAlign))
@@ -189,7 +197,7 @@ export function MapEditor() {
       }
     }, 300)
     return () => window.clearTimeout(timer)
-  }, [map, align, viewScale, layerMode, gridOpacity])
+  }, [map, align, viewScale, layerMode, gridOpacity, viewportFit])
 
   const paint = useCallback(
     (q: number, r: number) => {
@@ -220,7 +228,7 @@ export function MapEditor() {
   }
 
   function handleSaveDownload() {
-    const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity)
+    const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity, viewportFit)
     const json = serializeMap(doc)
     const blob = new Blob([json], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -233,16 +241,16 @@ export function MapEditor() {
   }
 
   function handleSaveLocal() {
-    const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity)
+    const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity, viewportFit)
     localStorage.setItem(STORAGE_KEY, serializeMap(doc))
     localStorage.setItem(ALIGN_STORAGE_KEY, JSON.stringify(doc.mapAlign))
     setStatus('Сохранено в localStorage (карта + калибровка)')
   }
 
   function handleSaveCalibration() {
-    const persist = buildMapAlign(align, viewScale, layerMode, gridOpacity)
+    const persist = buildMapAlign(align, viewScale, layerMode, gridOpacity, viewportFit)
     localStorage.setItem(ALIGN_STORAGE_KEY, JSON.stringify(persist))
-    const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity)
+    const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity, viewportFit)
     localStorage.setItem(STORAGE_KEY, serializeMap(doc))
     setStatus('Калибровка сохранена (JSON / localStorage)')
   }
@@ -261,6 +269,7 @@ export function MapEditor() {
         setViewScale,
         setLayerMode,
         setGridOpacity,
+        setViewportFit,
       })
       setStatus('Загружено из localStorage (карта + калибровка)')
     } catch (err) {
@@ -280,6 +289,7 @@ export function MapEditor() {
           setViewScale,
           setLayerMode,
           setGridOpacity,
+          setViewportFit,
         })
         setStatus(`Загружено: ${file.name}`)
       } catch (err) {
@@ -292,6 +302,11 @@ export function MapEditor() {
 
   function updateAlign(partial: Partial<MapImageAlign>) {
     setAlign((prev) => ({ ...prev, ...partial }))
+  }
+
+  function handleViewScaleChange(next: number) {
+    setViewportFit('free')
+    setViewScale(next)
   }
 
   return (
@@ -416,19 +431,44 @@ export function MapEditor() {
           </div>
         </section>
 
+        <section className="tool-group" aria-label="Кадр карты">
+          <span className="tool-group__label">Кадр</span>
+          <div className="layer-controls">
+            <button
+              type="button"
+              className={viewportFit === 'contain' ? 'is-active' : ''}
+              onClick={() => setViewportFit('contain')}
+              title="Показать весь лист map.webp в области холста (contain, с letterbox)"
+            >
+              Вся карта
+            </button>
+            <button
+              type="button"
+              className={viewportFit === 'width' ? 'is-active' : ''}
+              onClick={() => setViewportFit('width')}
+              title="Подогнать ширину листа под холст (низ может требовать прокрутки)"
+            >
+              По ширине
+            </button>
+            <span className="size-controls__hint" title="Щипок / Zoom переводят в ручной режим">
+              {viewportFit === 'free' ? 'ручной зум' : viewportFit === 'contain' ? 'весь лист' : 'по ширине'}
+            </span>
+          </div>
+        </section>
+
         <section className="tool-group tool-group--align" aria-label="Выравнивание карты">
           <span className="tool-group__label">Выравнивание</span>
           <div className="align-controls">
             <label
               className="align-controls__check"
-              title="Подложка по ширине гекс-поля + сцена на всю ширину области холста (пересчёт при resize)"
+              title="Калибровка: ширина подложки = ширина гекс-поля (не кадр viewport)"
             >
               <input
                 type="checkbox"
                 checked={align.fitWidth}
                 onChange={(e) => updateAlign({ fitWidth: e.target.checked })}
               />
-              Fit width
+              Fit width → сетка
             </label>
             <PrecisionField
               label="Scale"
@@ -460,13 +500,13 @@ export function MapEditor() {
             />
             <PrecisionField
               label="Zoom"
-              title="Зум сцены (щипок / Ctrl+колёсико / шкала). При Fit width при resize снова подгоняется под ширину холста"
+              title="Зум сцены (щипок / Ctrl+колёсико / шкала). Сбрасывает авто-кадр в ручной режим"
               value={viewScale}
               min={MIN_VIEW_SCALE}
               max={MAX_VIEW_SCALE}
               step={0.01}
               decimals={2}
-              onChange={setViewScale}
+              onChange={handleViewScaleChange}
             />
             <PrecisionField
               label="Сетка α"
@@ -483,7 +523,7 @@ export function MapEditor() {
               onClick={() => {
                 setAlign(DEFAULT_MAP_ALIGN)
                 setGridOpacity(0.45)
-                setViewScale(1)
+                setViewportFit('contain')
               }}
             >
               Сброс
@@ -542,9 +582,13 @@ export function MapEditor() {
           align={align}
           gridOpacity={gridOpacity}
           viewScale={viewScale}
-          onViewScaleChange={setViewScale}
+          onViewScaleChange={(scale) => {
+            // Pinch / ctrl-wheel inside canvas already marks free via onViewportFitChange.
+            setViewScale(scale)
+          }}
           tool={tool}
-          fitViewportWidth
+          viewportFit={viewportFit}
+          onViewportFitChange={setViewportFit}
         />
       </div>
     </div>
@@ -555,6 +599,7 @@ function loadInitialDocument(): {
   map: MapData
   align: MapImageAlign
   viewZoom: number
+  viewportFit: ViewportFitMode
   layerMode: MapLayerMode
   gridOpacity: number
 } {
@@ -562,6 +607,7 @@ function loadInitialDocument(): {
     map: createEmptyMap(),
     align: { ...DEFAULT_MAP_ALIGN },
     viewZoom: 1,
+    viewportFit: 'contain' as ViewportFitMode,
     layerMode: 'both' as MapLayerMode,
     gridOpacity: 0.45,
   }
@@ -574,6 +620,7 @@ function loadInitialDocument(): {
       if (!persist) {
         return { ...fallback, map: parsed }
       }
+      const viewportFit: ViewportFitMode = persist.viewportFit ?? 'contain'
       return {
         map: parsed,
         align: {
@@ -582,7 +629,11 @@ function loadInitialDocument(): {
           offsetY: persist.offsetY,
           fitWidth: persist.fitWidth,
         },
-        viewZoom: persist.viewZoom !== undefined ? clampViewZoom(persist.viewZoom) : 1,
+        viewZoom:
+          viewportFit === 'free' && persist.viewZoom !== undefined
+            ? clampViewZoom(persist.viewZoom)
+            : 1,
+        viewportFit,
         layerMode: persist.layerMode ?? 'both',
         gridOpacity: persist.gridOpacity ?? 0.45,
       }
@@ -593,6 +644,7 @@ function loadInitialDocument(): {
 
   const alignOnly = loadAlignFromStorage()
   if (alignOnly) {
+    const viewportFit: ViewportFitMode = alignOnly.viewportFit ?? 'contain'
     return {
       ...fallback,
       align: {
@@ -601,7 +653,11 @@ function loadInitialDocument(): {
         offsetY: alignOnly.offsetY,
         fitWidth: alignOnly.fitWidth,
       },
-      viewZoom: alignOnly.viewZoom !== undefined ? clampViewZoom(alignOnly.viewZoom) : 1,
+      viewZoom:
+        viewportFit === 'free' && alignOnly.viewZoom !== undefined
+          ? clampViewZoom(alignOnly.viewZoom)
+          : 1,
+      viewportFit,
       layerMode: alignOnly.layerMode ?? 'both',
       gridOpacity: alignOnly.gridOpacity ?? 0.45,
     }

@@ -5,6 +5,9 @@ export interface Axial {
   r: number
 }
 
+/** How the scene sits in the canvas viewport (not underlay↔hex calibration). */
+export type ViewportFitMode = 'contain' | 'width' | 'free'
+
 /** Persisted underlay/grid calibration (also accepted as JSON key `underlay`). */
 export interface MapAlignPersist {
   scale: number
@@ -13,6 +16,11 @@ export interface MapAlignPersist {
   fitWidth: boolean
   /** Scene zoom from pinch / ctrl+wheel. */
   viewZoom?: number
+  /**
+   * Viewport framing: `contain` = entire map sheet in frame (default),
+   * `width` = fit sheet width, `free` = manual pan/zoom.
+   */
+  viewportFit?: ViewportFitMode
   layerMode?: 'both' | 'map' | 'grid'
   gridOpacity?: number
 }
