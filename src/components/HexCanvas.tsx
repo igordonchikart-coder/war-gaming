@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { axialToPixel, hexCorners, pixelToAxial } from '../hex/math'
 import { getTerrain, inBounds } from '../hex/map'
 import {
@@ -15,6 +15,8 @@ import { TERRAIN_COLORS, type MapData, type Terrain } from '../hex/types'
  */
 const HEX_SIZE = 22
 const PADDING = 24
+const MIN_VIEW_SCALE = 0.25
+const MAX_VIEW_SCALE = 4
 
 interface HexCanvasProps {
   map: MapData
@@ -27,6 +29,12 @@ interface HexCanvasProps {
   align?: MapImageAlign
   /** Opacity of terrain fill when both map and grid are shown (0–1). */
   gridOpacity?: number
+  /** Called when view zoom changes (pinch / ctrl+wheel). */
+  onViewScaleChange?: (scale: number) => void
+}
+
+function clampViewScale(n: number): number {
+  return Math.min(MAX_VIEW_SCALE, Math.max(MIN_VIEW_SCALE, n))
 }
 
 function mapPixelSize(map: MapData): { width: number; height: number; originX: number; originY: number } {
@@ -106,6 +114,23 @@ function drawMapUnderlay(
   }
 }
 
+function touchDistance(a: Touch, b: Touch): number {
+  const dx = a.clientX - b.clientX
+  const dy = a.clientY - b.clientY
+  return Math.hypot(dx, dy)
+}
+
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el?.parentElement ?? null
+  while (node) {
+    const style = getComputedStyle(node)
+    const overflow = style.overflow + style.overflowX + style.overflowY
+    if (/(auto|scroll)/.test(overflow)) return node
+    node = node.parentElement
+  }
+  return null
+}
+
 export function HexCanvas({
   map,
   selectedTerrain,
@@ -116,12 +141,22 @@ export function HexCanvas({
   layerMode = 'both',
   align = { scale: 1, offsetX: 0, offsetY: 0, fitWidth: true },
   gridOpacity = 0.45,
+  onViewScaleChange,
 }: HexCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const spacerRef = useRef<HTMLDivElement>(null)
   const paintingRef = useRef(false)
+  const viewScaleRef = useRef(1)
+  const pinchRef = useRef<{ dist: number; scale: number } | null>(null)
+  const [viewScale, setViewScale] = useState(1)
   const layout = mapPixelSize(map)
   const showMap = layerMode === 'map' || layerMode === 'both'
   const showGrid = layerMode === 'grid' || layerMode === 'both'
+
+  useEffect(() => {
+    viewScaleRef.current = viewScale
+    onViewScaleChange?.(viewScale)
+  }, [viewScale, onViewScaleChange])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -175,7 +210,8 @@ export function HexCanvas({
           ctx.lineWidth = isHover ? 2 : 1
           ctx.stroke()
 
-          if (HEX_SIZE >= 22) {
+          // Labels = odd-q offset indices used by paint/hit-test (0-based).
+          if (HEX_SIZE >= 18) {
             ctx.fillStyle = showMap ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.45)'
             ctx.font = '10px ui-monospace, monospace'
             ctx.textAlign = 'center'
@@ -202,12 +238,92 @@ export function HexCanvas({
     }
   }, [map, hover, layout, mapImages, layerMode, align, gridOpacity, showMap, showGrid])
 
+  /** Zoom whole scene (underlay + grid) keeping the point under the cursor fixed. */
+  function zoomTo(clientX: number, clientY: number, nextScale: number) {
+    const spacer = spacerRef.current
+    const scrollParent = findScrollParent(spacer)
+    const oldScale = viewScaleRef.current
+    const clamped = clampViewScale(nextScale)
+    if (!spacer || Math.abs(clamped - oldScale) < 1e-6) return
+
+    const spacerRect = spacer.getBoundingClientRect()
+    const parentRect = scrollParent?.getBoundingClientRect()
+    const offsetX = clientX - spacerRect.left
+    const offsetY = clientY - spacerRect.top
+    const contentX = offsetX / oldScale
+    const contentY = offsetY / oldScale
+
+    viewScaleRef.current = clamped
+    setViewScale(clamped)
+
+    requestAnimationFrame(() => {
+      if (!scrollParent || !parentRect) return
+      const newLeft = spacer.offsetLeft + contentX * clamped - (clientX - parentRect.left)
+      const newTop = spacer.offsetTop + contentY * clamped - (clientY - parentRect.top)
+      scrollParent.scrollLeft = Math.max(0, newLeft)
+      scrollParent.scrollTop = Math.max(0, newTop)
+    })
+  }
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const onWheel = (e: WheelEvent) => {
+      // Trackpad pinch on Mac synthesizes wheel + ctrlKey; also support ctrl/meta+wheel.
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      const factor = Math.exp(-e.deltaY * 0.01)
+      zoomTo(e.clientX, e.clientY, viewScaleRef.current * factor)
+    }
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        pinchRef.current = {
+          dist: touchDistance(e.touches[0]!, e.touches[1]!),
+          scale: viewScaleRef.current,
+        }
+      }
+    }
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !pinchRef.current) return
+      e.preventDefault()
+      const a = e.touches[0]!
+      const b = e.touches[1]!
+      const dist = touchDistance(a, b)
+      if (pinchRef.current.dist < 1) return
+      const midX = (a.clientX + b.clientX) / 2
+      const midY = (a.clientY + b.clientY) / 2
+      zoomTo(midX, midY, pinchRef.current.scale * (dist / pinchRef.current.dist))
+    }
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) pinchRef.current = null
+    }
+
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    canvas.addEventListener('touchstart', onTouchStart, { passive: true })
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false })
+    canvas.addEventListener('touchend', onTouchEnd)
+    canvas.addEventListener('touchcancel', onTouchEnd)
+    return () => {
+      canvas.removeEventListener('wheel', onWheel)
+      canvas.removeEventListener('touchstart', onTouchStart)
+      canvas.removeEventListener('touchmove', onTouchMove)
+      canvas.removeEventListener('touchend', onTouchEnd)
+      canvas.removeEventListener('touchcancel', onTouchEnd)
+    }
+  }, [layout.width, layout.height])
+
   function eventToHex(e: MouseEvent<HTMLCanvasElement>): { q: number; r: number } | null {
     const canvas = canvasRef.current
     if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
-    const x = e.clientX - rect.left - layout.originX
-    const y = e.clientY - rect.top - layout.originY
+    if (rect.width <= 0 || rect.height <= 0) return null
+    // Map through CSS scale so paint/hit-test stay aligned with the zoomed scene.
+    const x = ((e.clientX - rect.left) / rect.width) * layout.width - layout.originX
+    const y = ((e.clientY - rect.top) / rect.height) * layout.height - layout.originY
     const hex = pixelToAxial(x, y, HEX_SIZE)
     if (!inBounds(map, hex.q, hex.r)) return null
     return hex
@@ -220,30 +336,52 @@ export function HexCanvas({
   }
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="hex-canvas"
-      aria-label="Гекс-карта"
-      onMouseDown={(e) => {
-        if (e.button !== 0) return
-        paintingRef.current = true
-        paintAt(e)
+    <div
+      ref={spacerRef}
+      className="hex-canvas-spacer"
+      style={{
+        width: layout.width * viewScale,
+        height: layout.height * viewScale,
+        position: 'relative',
       }}
-      onMouseUp={() => {
-        paintingRef.current = false
-      }}
-      onMouseLeave={() => {
-        paintingRef.current = false
-        onHover(null)
-      }}
-      onMouseMove={(e) => {
-        const hex = eventToHex(e)
-        onHover(hex)
-        if (paintingRef.current && hex) {
-          onPaint(hex.q, hex.r)
-        }
-      }}
-      title={`Кисть: ${selectedTerrain}`}
-    />
+    >
+      <canvas
+        ref={canvasRef}
+        className="hex-canvas"
+        aria-label="Гекс-карта"
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          width: layout.width,
+          height: layout.height,
+          transform: `scale(${viewScale})`,
+          transformOrigin: '0 0',
+          touchAction: 'none',
+        }}
+        onMouseDown={(e) => {
+          if (e.button !== 0) return
+          paintingRef.current = true
+          paintAt(e)
+        }}
+        onMouseUp={() => {
+          paintingRef.current = false
+        }}
+        onMouseLeave={() => {
+          paintingRef.current = false
+          onHover(null)
+        }}
+        onMouseMove={(e) => {
+          const hex = eventToHex(e)
+          onHover(hex)
+          if (paintingRef.current && hex) {
+            onPaint(hex.q, hex.r)
+          }
+        }}
+        title={`Кисть: ${selectedTerrain}`}
+      />
+    </div>
   )
 }
+
+export { MIN_VIEW_SCALE, MAX_VIEW_SCALE }

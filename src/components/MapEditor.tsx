@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createEmptyMap, parseMap, resizeMap, serializeMap, setTerrain } from '../hex/map'
+import {
+  clampSize,
+  createEmptyMap,
+  parseMap,
+  resizeMap,
+  serializeMap,
+  setTerrain,
+} from '../hex/map'
 import {
   DEFAULT_MAP_ALIGN,
   loadMapImagesProgressive,
@@ -18,6 +25,11 @@ import {
   type Terrain,
 } from '../hex/types'
 import { HexCanvas } from './HexCanvas'
+
+/** Drawn cells = width × height = tiles.length (odd-q rectangular grid). */
+function formatGridSize(map: MapData): string {
+  return `${map.width}×${map.height} (${map.tiles.length} гексов)`
+}
 
 const TERRAINS: Terrain[] = ['plain', 'forest', 'water']
 
@@ -38,6 +50,7 @@ export function MapEditor() {
   const [align, setAlign] = useState<MapImageAlign>(DEFAULT_MAP_ALIGN)
   const [gridOpacity, setGridOpacity] = useState(0.45)
   const [mapImages, setMapImages] = useState<LoadedMapImage[]>([])
+  const [viewScale, setViewScale] = useState(1)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -47,13 +60,13 @@ export function MapEditor() {
 
   useEffect(() => {
     let cancelled = false
-    setStatus('Загрузка карты…')
+    setStatus('Загрузка подложки…')
     loadMapImagesProgressive(undefined, undefined, (loaded, index, total) => {
       if (cancelled) return
       setStatus(
-        `Карта ${index + 1}/${total}` +
+        `Подложка ${index + 1}/${total}` +
           (loaded.downscaled ? ' (даунскейл)' : '') +
-          ` · ${loaded.naturalWidth}×${loaded.naturalHeight}`,
+          ` · ${loaded.naturalWidth}×${loaded.naturalHeight} px`,
       )
     })
       .then((images) => {
@@ -83,14 +96,18 @@ export function MapEditor() {
   )
 
   function applySize() {
-    const w = Number(widthInput)
-    const h = Number(heightInput)
-    if (!Number.isFinite(w) || !Number.isFinite(h)) {
+    const rawW = Number(widthInput)
+    const rawH = Number(heightInput)
+    if (!Number.isFinite(rawW) || !Number.isFinite(rawH)) {
       setStatus('Размер должен быть числом')
       return
     }
+    const w = clampSize(rawW)
+    const h = clampSize(rawH)
+    setWidthInput(String(w))
+    setHeightInput(String(h))
     setMap((prev) => resizeMap(prev, w, h))
-    setStatus(`Размер: ${Math.round(w)}×${Math.round(h)}`)
+    setStatus(`Сетка: ${w}×${h} (${w * h} гексов)`)
   }
 
   function handleNew() {
@@ -158,6 +175,8 @@ export function MapEditor() {
         </div>
         <p className="editor__status" role="status">
           {status}
+          {` · сетка ${formatGridSize(map)}`}
+          {` · зум ${(viewScale * 100).toFixed(0)}%`}
           {hover ? ` · гекс ${hover.q},${hover.r}` : ''}
         </p>
       </header>
@@ -182,7 +201,9 @@ export function MapEditor() {
         </section>
 
         <section className="tool-group" aria-label="Размер карты">
-          <span className="tool-group__label">Размер</span>
+          <span className="tool-group__label">
+            Размер сетки · {map.width}×{map.height} = {map.tiles.length} гексов
+          </span>
           <div className="size-controls">
             <label>
               W
@@ -192,6 +213,7 @@ export function MapEditor() {
                 max={MAX_MAP_SIZE}
                 value={widthInput}
                 onChange={(e) => setWidthInput(e.target.value)}
+                title={`Столбцы (odd-q), ${MIN_MAP_SIZE}–${MAX_MAP_SIZE}; по умолчанию ${DEFAULT_MAP_SIZE}`}
               />
             </label>
             <label>
@@ -202,11 +224,15 @@ export function MapEditor() {
                 max={MAX_MAP_SIZE}
                 value={heightInput}
                 onChange={(e) => setHeightInput(e.target.value)}
+                title={`Строки (odd-q), ${MIN_MAP_SIZE}–${MAX_MAP_SIZE}; по умолчанию ${DEFAULT_MAP_SIZE}`}
               />
             </label>
             <button type="button" onClick={applySize}>
               Применить
             </button>
+            <span className="size-controls__hint" title="Подписи на гексах = odd-q индекс q,r (с нуля), не печатный номер карты">
+              подписи q,r
+            </span>
           </div>
         </section>
 
@@ -237,8 +263,8 @@ export function MapEditor() {
               />
               Fit width
             </label>
-            <label>
-              Scale
+            <label title="Масштаб только подложки относительно сетки (не зум сцены)">
+              Scale подложки
               <input
                 type="range"
                 min={0.2}
@@ -342,6 +368,7 @@ export function MapEditor() {
           layerMode={layerMode}
           align={align}
           gridOpacity={gridOpacity}
+          onViewScaleChange={setViewScale}
         />
       </div>
     </div>
