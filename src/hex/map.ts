@@ -1,12 +1,52 @@
 import {
-  DEFAULT_MAP_SIZE,
+  DEFAULT_MAP_HEIGHT,
+  DEFAULT_MAP_WIDTH,
   MAX_MAP_SIZE,
   MIN_MAP_SIZE,
+  type MapAlignPersist,
   type MapData,
   type Terrain,
+  type ViewportFitMode,
 } from './types'
 
-export function createEmptyMap(width = DEFAULT_MAP_SIZE, height = DEFAULT_MAP_SIZE): MapData {
+const LAYER_MODES = new Set(['both', 'map', 'grid'])
+const VIEWPORT_FITS = new Set<ViewportFitMode>(['contain', 'width', 'free'])
+
+/** Parse optional `mapAlign` / `underlay` block from a map JSON object. */
+export function parseMapAlign(raw: unknown): MapAlignPersist | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const obj = raw as Record<string, unknown>
+  const scale = Number(obj.scale)
+  const offsetX = Number(obj.offsetX)
+  const offsetY = Number(obj.offsetY)
+  if (![scale, offsetX, offsetY].every(Number.isFinite)) return undefined
+
+  const fitWidth = obj.fitWidth === undefined ? true : Boolean(obj.fitWidth)
+  const result: MapAlignPersist = { scale, offsetX, offsetY, fitWidth }
+
+  if (obj.viewZoom !== undefined) {
+    const viewZoom = Number(obj.viewZoom)
+    if (Number.isFinite(viewZoom)) result.viewZoom = viewZoom
+  }
+  if (typeof obj.viewportFit === 'string' && VIEWPORT_FITS.has(obj.viewportFit as ViewportFitMode)) {
+    result.viewportFit = obj.viewportFit as ViewportFitMode
+  }
+  if (typeof obj.layerMode === 'string' && LAYER_MODES.has(obj.layerMode)) {
+    result.layerMode = obj.layerMode as MapAlignPersist['layerMode']
+  }
+  if (obj.gridOpacity !== undefined) {
+    const gridOpacity = Number(obj.gridOpacity)
+    if (Number.isFinite(gridOpacity)) {
+      result.gridOpacity = Math.min(1, Math.max(0, gridOpacity))
+    }
+  }
+  return result
+}
+
+export function createEmptyMap(
+  width = DEFAULT_MAP_WIDTH,
+  height = DEFAULT_MAP_HEIGHT,
+): MapData {
   const w = clampSize(width)
   const h = clampSize(height)
   return {
@@ -19,6 +59,30 @@ export function createEmptyMap(width = DEFAULT_MAP_SIZE, height = DEFAULT_MAP_SI
 
 export function clampSize(n: number): number {
   return Math.min(MAX_MAP_SIZE, Math.max(MIN_MAP_SIZE, Math.round(n)))
+}
+
+/**
+ * Suggest odd-q W×H so the hex field aspect matches the underlay sheet
+ * (fit-width calibration can then cover the whole leaf).
+ *
+ * Flat-top span (size units): horiz ≈ 1.5*(cols−1)+2, vert ≈ √3*((rows−1)+0.5)+2.
+ */
+export function suggestGridSizeForUnderlay(
+  imageWidth: number,
+  imageHeight: number,
+  preferredCols = DEFAULT_MAP_WIDTH,
+): { width: number; height: number } {
+  if (!(imageWidth > 0) || !(imageHeight > 0)) {
+    return { width: DEFAULT_MAP_WIDTH, height: DEFAULT_MAP_HEIGHT }
+  }
+  const cols = clampSize(preferredCols)
+  const targetAspect = imageWidth / imageHeight
+  const horizSpan = 1.5 * (cols - 1) + 2
+  const vertSpan = horizSpan / targetAspect
+  // odd-q: odd columns sit +0.5 row; when cols>1 use that extra half-step
+  const oddBump = cols > 1 ? 0.5 : 0
+  const rows = Math.round((vertSpan - 2) / Math.sqrt(3) - oddBump + 1)
+  return { width: cols, height: clampSize(rows) }
 }
 
 export function tileIndex(map: MapData, q: number, r: number): number {
@@ -56,11 +120,24 @@ export function resizeMap(map: MapData, width: number, height: number): MapData 
       tiles[r * w + q] = map.tiles[r * map.width + q]!
     }
   }
-  return { version: 1, width: w, height: h, tiles }
+  return {
+    version: 1,
+    width: w,
+    height: h,
+    tiles,
+    ...(map.mapAlign ? { mapAlign: map.mapAlign } : {}),
+  }
 }
 
 export function serializeMap(map: MapData): string {
-  return JSON.stringify(map, null, 2)
+  const payload: MapData = {
+    version: 1,
+    width: map.width,
+    height: map.height,
+    tiles: map.tiles,
+  }
+  if (map.mapAlign) payload.mapAlign = map.mapAlign
+  return JSON.stringify(payload, null, 2)
 }
 
 export function parseMap(json: string): MapData {
@@ -90,5 +167,13 @@ export function parseMap(json: string): MapData {
     }
     tiles.push(t as Terrain)
   }
-  return { version: 1, width: w, height: h, tiles }
+  const mapAlign =
+    parseMapAlign(obj.mapAlign) ?? parseMapAlign(obj.underlay) ?? undefined
+  return {
+    version: 1,
+    width: w,
+    height: h,
+    tiles,
+    ...(mapAlign ? { mapAlign } : {}),
+  }
 }
