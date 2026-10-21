@@ -52,10 +52,10 @@ export const TERRAIN_COLORS: Record<Terrain, string> = {
 
 /**
  * Default hex grid for flat-top odd-q maps (Hanko sheet ≈ 11731×9933).
- * Width×height ≈ underlay aspect at fit-width; use «По подложке» to recompute.
+ * Matches printed labels ≈ cols 10–78 × rows 01–51 after auto-calibration.
  */
-export const DEFAULT_MAP_WIDTH = 80
-export const DEFAULT_MAP_HEIGHT = 58
+export const DEFAULT_MAP_WIDTH = 69
+export const DEFAULT_MAP_HEIGHT = 51
 /** @deprecated Prefer DEFAULT_MAP_WIDTH / DEFAULT_MAP_HEIGHT. */
 export const DEFAULT_MAP_SIZE = DEFAULT_MAP_WIDTH
 export const MIN_MAP_SIZE = 4

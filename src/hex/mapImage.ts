@@ -45,12 +45,17 @@ export interface MapImageAlign {
   fitWidth: boolean
 }
 
+/**
+ * Default underlay align = shipped auto-calibration for full `map.webp`
+ * (see `src/hex/autoCalibrate.ts` / `public/map/calibration.json`).
+ * Fit-width start is off: absolute canvas-px / image-px scales.
+ */
 export const DEFAULT_MAP_ALIGN: MapImageAlign = {
-  scaleX: 1,
-  scaleY: 1,
-  offsetX: 0,
-  offsetY: 0,
-  fitWidth: true,
+  scaleX: 0.20213947,
+  scaleY: 0.20455945,
+  offsetX: -63.93,
+  offsetY: -67.1012,
+  fitWidth: false,
 }
 
 export interface MapImageLoadOptions {

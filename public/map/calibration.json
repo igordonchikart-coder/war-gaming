@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "source": "public/map.webp auto-detect (AC pitch + multipoint LS)",
+  "imageWidth": 11731,
+  "imageHeight": 9933,
+  "hexSize": 22,
+  "gridWidth": 69,
+  "gridHeight": 51,
+  "mapAlign": {
+    "scaleX": 0.20213947,
+    "scaleY": 0.20455945,
+    "offsetX": -63.93,
+    "offsetY": -67.1012,
+    "fitWidth": false
+  },
+  "errorNote": "≈0.15 hex median residual, up to ≈0.25 hex at far corners; use 2-point calib to touch up"
+}

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  AUTO_CALIB_ERROR_NOTE,
+  AUTO_CALIB_GRID_HEIGHT,
+  AUTO_CALIB_GRID_WIDTH,
+  AUTO_CALIBRATION,
+  loadShippedCalibration,
+} from '../hex/autoCalibrate'
+import {
   bakeFitWidthOff,
   hexFieldPixelWidth,
   solveTwoPointAlign,
@@ -401,6 +408,28 @@ export function MapEditor() {
     setCalibHex2(null)
   }
 
+  /** One-click: apply shipped auto-calibration (+ optional resize to printed extent). */
+  async function handleAutoCalibrate() {
+    resetCalibrationSession()
+    setStatus('Автокалибровка…')
+    const { align: next, fromFile } = await loadShippedCalibration()
+    setAlign(next)
+    setMap((prev) => {
+      if (prev.width === AUTO_CALIB_GRID_WIDTH && prev.height === AUTO_CALIB_GRID_HEIGHT) {
+        return prev
+      }
+      return resizeMap(prev, AUTO_CALIB_GRID_WIDTH, AUTO_CALIB_GRID_HEIGHT)
+    })
+    setWidthInput(String(AUTO_CALIB_GRID_WIDTH))
+    setHeightInput(String(AUTO_CALIB_GRID_HEIGHT))
+    setViewportFit('contain')
+    const src = fromFile ? '/map/calibration.json' : 'встроенная'
+    setStatus(
+      `Автокалибровка применена (${src}) · X ${next.scaleX.toFixed(4)} · Y ${next.scaleY.toFixed(4)} · ` +
+        `сетка ${AUTO_CALIB_GRID_WIDTH}×${AUTO_CALIB_GRID_HEIGHT} · ${AUTO_CALIB_ERROR_NOTE}`,
+    )
+  }
+
   function startTwoPointCalib() {
     setCalibMap1(null)
     setCalibMap2(null)
@@ -739,6 +768,16 @@ export function MapEditor() {
             />
             <button
               type="button"
+              className="is-active"
+              onClick={() => {
+                void handleAutoCalibrate()
+              }}
+              title="Применить автокалибровку map.webp (scaleX/Y + offset, сетка 69×51). Погрешность ~0.15 гекса."
+            >
+              Автокалибровка
+            </button>
+            <button
+              type="button"
               className={calibPhase ? 'is-active' : ''}
               onClick={() => (calibPhase ? cancelTwoPointCalib() : startTwoPointCalib())}
               title="Две точки на печатной сетке + два гекса оверлея → scaleX/Y + offset (без вращения)"
@@ -749,10 +788,11 @@ export function MapEditor() {
               type="button"
               onClick={() => {
                 resetCalibrationSession()
-                setAlign(DEFAULT_MAP_ALIGN)
+                setAlign({ ...AUTO_CALIBRATION })
                 setGridOpacity(0.45)
                 setViewportFit('contain')
               }}
+              title="Вернуть встроенную автокалибровку (не Fit width)"
             >
               Сброс
             </button>
@@ -764,8 +804,9 @@ export function MapEditor() {
               Сохранить калибровку
             </button>
             <p className="align-controls__hint" role="note">
-              Если слева ровно, а справа уезжает — крути Scale Y / калибровка 2 точки.
-              Fit width — только старт; ручной Scale X/Y его выключает. Калибровка → JSON / LS.
+              Один клик: «Автокалибровка» (или Load <code>public/map/map-align-autocal.json</code>).
+              Погрешность ≈0.15 гекса — дальние углы дожмите «Калибровка 2 точки» / Scale Y.
+              Fit width — только грубый старт; ручной Scale его выключает.
             </p>
           </div>
         </section>
