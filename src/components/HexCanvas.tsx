@@ -9,11 +9,11 @@ import {
 import { TERRAIN_COLORS, type MapData, type Terrain } from '../hex/types'
 
 /**
- * Center-to-vertex radius (pointy-top: height = 2*size, width = √3*size).
+ * Center-to-vertex radius (flat-top: width = 2*size, height = √3*size).
  * Tuned with DEFAULT_MAP_SIZE so fit-width underlay sits closer to Hanko pitch;
  * fine-tune further via map size + align UI.
  */
-const HEX_SIZE = 20
+const HEX_SIZE = 22
 const PADDING = 24
 
 interface HexCanvasProps {

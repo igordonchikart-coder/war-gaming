@@ -1,27 +1,31 @@
 import type { Axial } from './types'
 
 /**
- * Pointy-top orientation (Red Blob Games).
- * Stored (q, r) are **odd-r** offset coordinates: horizontal rows, odd rows
- * shoved right — the usual rectangular layout for pointy-top hexes.
+ * Flat-top orientation (Red Blob Games) — horizontal edges on top and bottom,
+ * per customer requirement (not pointy-top).
+ *
+ * Stored (q, r) are **odd-q** offset coordinates: vertical columns, odd columns
+ * shoved down — the usual rectangular layout for flat-top hexes, and a natural
+ * fit for the editor’s rectangular (width × height) tile array
+ * (`index = r * width + q`).
  *
  * Pixel / corner formulas match https://www.redblobgames.com/grids/hexagons/
- * (“pointy” orientation + “odd-r” offset).
+ * (“flat” orientation + “odd-q” offset).
  */
 
-/** Pointy-top odd-r: pixel center from offset (col=q, row=r). */
+/** Flat-top odd-q: pixel center from offset (col=q, row=r). */
 export function axialToPixel(q: number, r: number, size: number): { x: number; y: number } {
-  const x = size * Math.sqrt(3) * (q + 0.5 * (r & 1))
-  const y = size * ((3 / 2) * r)
+  const x = size * ((3 / 2) * q)
+  const y = size * Math.sqrt(3) * (r + 0.5 * (q & 1))
   return { x, y }
 }
 
-/** Six corner points of a pointy-top hex centered at (cx, cy). */
+/** Six corner points of a flat-top hex centered at (cx, cy). */
 export function hexCorners(cx: number, cy: number, size: number): Array<{ x: number; y: number }> {
   const corners: Array<{ x: number; y: number }> = []
   for (let i = 0; i < 6; i++) {
-    // Pointy-top: first corner at -30° (vertex on top in canvas y-down).
-    const angle = (Math.PI / 180) * (60 * i - 30)
+    // Flat-top: first corner at 0° → left/right vertices; top & bottom edges are horizontal.
+    const angle = (Math.PI / 180) * (60 * i)
     corners.push({
       x: cx + size * Math.cos(angle),
       y: cy + size * Math.sin(angle),
@@ -59,52 +63,52 @@ export const AXIAL_DIRECTIONS: ReadonlyArray<Axial> = [
   { q: 0, r: +1 },
 ]
 
-/** odd-r offset → axial. */
-export function oddrToAxial(col: number, row: number): Axial {
-  const q = col - (row - (row & 1)) / 2
-  const r = row
+/** odd-q offset → axial. */
+export function oddqToAxial(col: number, row: number): Axial {
+  const q = col
+  const r = row - (col - (col & 1)) / 2
   return { q, r }
 }
 
-/** axial → odd-r offset. */
-export function axialToOddr(q: number, r: number): Axial {
-  const col = q + (r - (r & 1)) / 2
-  const row = r
+/** axial → odd-q offset. */
+export function axialToOddq(q: number, r: number): Axial {
+  const col = q
+  const row = r + (q - (q & 1)) / 2
   return { q: col, r: row }
 }
 
 /**
- * Pointy-top odd-r neighbors in offset (col, row) space.
- * Row parity changes the ±col deltas (Red Blob Games).
+ * Flat-top odd-q neighbors in offset (col, row) space.
+ * Column parity changes the ±row deltas (Red Blob Games).
  */
-export function oddrNeighbors(col: number, row: number): Axial[] {
+export function oddqNeighbors(col: number, row: number): Axial[] {
   const even = [
     [+1, 0],
+    [+1, -1],
     [0, -1],
     [-1, -1],
+    [-1, 0],
+    [0, +1],
+  ] as const
+  const odd = [
+    [+1, +1],
+    [+1, 0],
+    [0, -1],
     [-1, 0],
     [-1, +1],
     [0, +1],
   ] as const
-  const odd = [
-    [+1, 0],
-    [+1, -1],
-    [0, -1],
-    [-1, 0],
-    [0, +1],
-    [+1, +1],
-  ] as const
-  const deltas = row & 1 ? odd : even
+  const deltas = col & 1 ? odd : even
   return deltas.map(([dq, dr]) => ({ q: col + dq, r: row + dr }))
 }
 
-/** Pixel (relative to map origin) → nearest odd-r offset hex. */
+/** Pixel (relative to map origin) → nearest odd-q offset hex. */
 export function pixelToAxial(x: number, y: number, size: number): Axial {
-  // Pointy-top pixel → fractional axial, round, then to odd-r offset.
-  const fq = ((Math.sqrt(3) / 3) * x - (1 / 3) * y) / size
-  const fr = ((2 / 3) * y) / size
+  // Flat-top pixel → fractional axial, round, then to odd-q offset.
+  const fq = ((2 / 3) * x) / size
+  const fr = ((-1 / 3) * x + (Math.sqrt(3) / 3) * y) / size
   const axial = cubeRound(fq, fr)
-  return axialToOddr(axial.q, axial.r)
+  return axialToOddq(axial.q, axial.r)
 }
 
 export function tileKey(q: number, r: number): string {

@@ -25,7 +25,10 @@ export const TERRAIN_COLORS: Record<Terrain, string> = {
   water: '#3a6ea5',
 }
 
-/** Default hexes across; closer to Hanko printed density than the old 12. */
+/**
+ * Default hexes across/down for flat-top odd-q rectangular maps.
+ * ~40 columns ≈ Hanko printed density under fit-width; user can nudge size/align in UI.
+ */
 export const DEFAULT_MAP_SIZE = 40
 export const MIN_MAP_SIZE = 4
 export const MAX_MAP_SIZE = 64
