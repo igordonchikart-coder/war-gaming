@@ -48,12 +48,20 @@ export const TERRAIN_COLORS: Record<Terrain, string> = {
 }
 
 /**
- * Default hexes across/down for flat-top odd-q rectangular maps.
- * ~40 columns ≈ Hanko printed density under fit-width; user can nudge size/align in UI.
+ * Default hex grid for flat-top odd-q maps (Hanko sheet ≈ 11731×9933).
+ * Width×height ≈ underlay aspect at fit-width; use «По подложке» to recompute.
  */
-export const DEFAULT_MAP_SIZE = 40
+export const DEFAULT_MAP_WIDTH = 80
+export const DEFAULT_MAP_HEIGHT = 58
+/** @deprecated Prefer DEFAULT_MAP_WIDTH / DEFAULT_MAP_HEIGHT. */
+export const DEFAULT_MAP_SIZE = DEFAULT_MAP_WIDTH
 export const MIN_MAP_SIZE = 4
-export const MAX_MAP_SIZE = 64
+/** Hard safety clamp (memory / canvas). UI warns above WARN_MAP_SIZE. */
+export const MAX_MAP_SIZE = 256
+/** Soft UI warning threshold — inputs still accept up to MAX_MAP_SIZE. */
+export const WARN_MAP_SIZE = 200
+/** Skip per-hex q,r labels when cell count exceeds this (LOD). */
+export const LABEL_CELL_LIMIT = 2500
 export const STORAGE_KEY = 'war-gaming-map-v1'
 /** Separate key for last calibration snapshot (mirrors mapAlign in the map JSON). */
 export const ALIGN_STORAGE_KEY = 'war-gaming-map-align-v1'

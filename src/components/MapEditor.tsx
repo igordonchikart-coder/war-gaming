@@ -7,6 +7,7 @@ import {
   resizeMap,
   serializeMap,
   setTerrain,
+  suggestGridSizeForUnderlay,
 } from '../hex/map'
 import {
   DEFAULT_MAP_ALIGN,
@@ -17,12 +18,15 @@ import {
 } from '../hex/mapImage'
 import {
   ALIGN_STORAGE_KEY,
-  DEFAULT_MAP_SIZE,
+  DEFAULT_MAP_HEIGHT,
+  DEFAULT_MAP_WIDTH,
+  LABEL_CELL_LIMIT,
   MAX_MAP_SIZE,
   MIN_MAP_SIZE,
   STORAGE_KEY,
   TERRAIN_COLORS,
   TERRAIN_LABELS,
+  WARN_MAP_SIZE,
   type MapAlignPersist,
   type MapData,
   type Terrain,
@@ -206,6 +210,16 @@ export function MapEditor() {
     [brush],
   )
 
+  function sizeWarning(w: number, h: number): string {
+    if (w > WARN_MAP_SIZE || h > WARN_MAP_SIZE) {
+      return ` · внимание: сторона >${WARN_MAP_SIZE} (потолок ${MAX_MAP_SIZE})`
+    }
+    if (w * h > LABEL_CELL_LIMIT) {
+      return ` · подписи q,r скрыты (>${LABEL_CELL_LIMIT} гексов)`
+    }
+    return ''
+  }
+
   function applySize() {
     const rawW = Number(widthInput)
     const rawH = Number(heightInput)
@@ -218,7 +232,29 @@ export function MapEditor() {
     setWidthInput(String(w))
     setHeightInput(String(h))
     setMap((prev) => resizeMap(prev, w, h))
-    setStatus(`Сетка: ${w}×${h} (${w * h} гексов)`)
+    setStatus(`Сетка: ${w}×${h} (${w * h} гексов)${sizeWarning(w, h)}`)
+  }
+
+  /** Resize grid so field aspect matches the loaded underlay (covers sheet at fit-width). */
+  function applySizeFromUnderlay() {
+    const primary = mapImages[0]
+    if (!primary) {
+      setStatus('Нет подложки — сначала дождитесь загрузки map.webp')
+      return
+    }
+    const suggested = suggestGridSizeForUnderlay(
+      primary.naturalWidth,
+      primary.naturalHeight,
+      Number(widthInput) || DEFAULT_MAP_WIDTH,
+    )
+    const w = suggested.width
+    const h = suggested.height
+    setWidthInput(String(w))
+    setHeightInput(String(h))
+    setMap((prev) => resizeMap(prev, w, h))
+    setStatus(
+      `Сетка по подложке ${primary.naturalWidth}×${primary.naturalHeight}: ${w}×${h} (${w * h} гексов)${sizeWarning(w, h)}`,
+    )
   }
 
   function handleNew() {
@@ -371,6 +407,9 @@ export function MapEditor() {
         <section className="tool-group" aria-label="Размер карты">
           <span className="tool-group__label">
             Размер сетки · {map.width}×{map.height} = {map.tiles.length} гексов
+            {(map.width > WARN_MAP_SIZE || map.height > WARN_MAP_SIZE) && (
+              <span className="size-controls__warn"> · &gt;{WARN_MAP_SIZE}</span>
+            )}
           </span>
           <div className="size-controls">
             <label>
@@ -381,7 +420,7 @@ export function MapEditor() {
                 max={MAX_MAP_SIZE}
                 value={widthInput}
                 onChange={(e) => setWidthInput(e.target.value)}
-                title={`Столбцы (odd-q), ${MIN_MAP_SIZE}–${MAX_MAP_SIZE}; по умолчанию ${DEFAULT_MAP_SIZE}`}
+                title={`Столбцы (odd-q), ${MIN_MAP_SIZE}–${MAX_MAP_SIZE}; по умолчанию ${DEFAULT_MAP_WIDTH}; предупреждение при >${WARN_MAP_SIZE}`}
               />
             </label>
             <label>
@@ -392,14 +431,25 @@ export function MapEditor() {
                 max={MAX_MAP_SIZE}
                 value={heightInput}
                 onChange={(e) => setHeightInput(e.target.value)}
-                title={`Строки (odd-q), ${MIN_MAP_SIZE}–${MAX_MAP_SIZE}; по умолчанию ${DEFAULT_MAP_SIZE}`}
+                title={`Строки (odd-q), ${MIN_MAP_SIZE}–${MAX_MAP_SIZE}; по умолчанию ${DEFAULT_MAP_HEIGHT}; предупреждение при >${WARN_MAP_SIZE}`}
               />
             </label>
             <button type="button" onClick={applySize}>
               Применить
             </button>
-            <span className="size-controls__hint" title="Подписи на гексах = odd-q индекс q,r (с нуля), не печатный номер карты">
-              подписи q,r
+            <button
+              type="button"
+              onClick={applySizeFromUnderlay}
+              disabled={mapImages.length === 0}
+              title="Подобрать H под aspect подложки, сохранив текущий W (или дефолт). Сетка сможет покрыть лист при Fit width."
+            >
+              По подложке
+            </button>
+            <span
+              className="size-controls__hint"
+              title={`Подписи q,r на гексах (0-based odd-q). Скрываются при >${LABEL_CELL_LIMIT} клеток. Потолок ${MAX_MAP_SIZE}, мягкое предупреждение >${WARN_MAP_SIZE}.`}
+            >
+              {map.tiles.length > LABEL_CELL_LIMIT ? 'без подписей (LOD)' : 'подписи q,r'}
             </span>
           </div>
         </section>
@@ -483,8 +533,8 @@ export function MapEditor() {
             <PrecisionField
               label="X"
               value={align.offsetX}
-              min={-800}
-              max={800}
+              min={-4000}
+              max={4000}
               step={1}
               decimals={0}
               onChange={(offsetX) => updateAlign({ offsetX })}
@@ -492,8 +542,8 @@ export function MapEditor() {
             <PrecisionField
               label="Y"
               value={align.offsetY}
-              min={-800}
-              max={800}
+              min={-4000}
+              max={4000}
               step={1}
               decimals={0}
               onChange={(offsetY) => updateAlign({ offsetY })}

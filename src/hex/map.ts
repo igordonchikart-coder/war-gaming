@@ -1,5 +1,6 @@
 import {
-  DEFAULT_MAP_SIZE,
+  DEFAULT_MAP_HEIGHT,
+  DEFAULT_MAP_WIDTH,
   MAX_MAP_SIZE,
   MIN_MAP_SIZE,
   type MapAlignPersist,
@@ -42,7 +43,10 @@ export function parseMapAlign(raw: unknown): MapAlignPersist | undefined {
   return result
 }
 
-export function createEmptyMap(width = DEFAULT_MAP_SIZE, height = DEFAULT_MAP_SIZE): MapData {
+export function createEmptyMap(
+  width = DEFAULT_MAP_WIDTH,
+  height = DEFAULT_MAP_HEIGHT,
+): MapData {
   const w = clampSize(width)
   const h = clampSize(height)
   return {
@@ -55,6 +59,30 @@ export function createEmptyMap(width = DEFAULT_MAP_SIZE, height = DEFAULT_MAP_SI
 
 export function clampSize(n: number): number {
   return Math.min(MAX_MAP_SIZE, Math.max(MIN_MAP_SIZE, Math.round(n)))
+}
+
+/**
+ * Suggest odd-q W×H so the hex field aspect matches the underlay sheet
+ * (fit-width calibration can then cover the whole leaf).
+ *
+ * Flat-top span (size units): horiz ≈ 1.5*(cols−1)+2, vert ≈ √3*((rows−1)+0.5)+2.
+ */
+export function suggestGridSizeForUnderlay(
+  imageWidth: number,
+  imageHeight: number,
+  preferredCols = DEFAULT_MAP_WIDTH,
+): { width: number; height: number } {
+  if (!(imageWidth > 0) || !(imageHeight > 0)) {
+    return { width: DEFAULT_MAP_WIDTH, height: DEFAULT_MAP_HEIGHT }
+  }
+  const cols = clampSize(preferredCols)
+  const targetAspect = imageWidth / imageHeight
+  const horizSpan = 1.5 * (cols - 1) + 2
+  const vertSpan = horizSpan / targetAspect
+  // odd-q: odd columns sit +0.5 row; when cols>1 use that extra half-step
+  const oddBump = cols > 1 ? 0.5 : 0
+  const rows = Math.round((vertSpan - 2) / Math.sqrt(3) - oddBump + 1)
+  return { width: cols, height: clampSize(rows) }
 }
 
 export function tileIndex(map: MapData, q: number, r: number): number {

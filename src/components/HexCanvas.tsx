@@ -6,12 +6,17 @@ import {
   type MapImageAlign,
   type MapLayerMode,
 } from '../hex/mapImage'
-import { TERRAIN_COLORS, type MapData, type Terrain, type ViewportFitMode } from '../hex/types'
+import {
+  LABEL_CELL_LIMIT,
+  TERRAIN_COLORS,
+  type MapData,
+  type Terrain,
+  type ViewportFitMode,
+} from '../hex/types'
 
 /**
  * Center-to-vertex radius (flat-top: width = 2*size, height = √3*size).
- * Tuned with DEFAULT_MAP_SIZE so fit-width underlay sits closer to Hanko pitch;
- * fine-tune further via map size + align UI.
+ * Tuned so fit-width underlay sits closer to Hanko pitch; nudge via size + align UI.
  */
 const HEX_SIZE = 22
 const PADDING = 24
@@ -60,27 +65,23 @@ function clampViewScale(n: number): number {
   return Math.min(MAX_VIEW_SCALE, Math.max(MIN_VIEW_SCALE, n))
 }
 
+/** Flat-top odd-q center extents without O(W×H) scan. */
+function oddqCenterExtents(map: MapData): { minX: number; maxX: number; minY: number; maxY: number } {
+  const minX = 0
+  const maxX = map.width <= 1 ? 0 : HEX_SIZE * 1.5 * (map.width - 1)
+  const minY = 0
+  const oddBump = map.width > 1 ? 0.5 : 0
+  const maxY = HEX_SIZE * Math.sqrt(3) * (map.height - 1 + oddBump)
+  return { minX, maxX, minY, maxY }
+}
+
 export function mapPixelSize(map: MapData): {
   width: number
   height: number
   originX: number
   originY: number
 } {
-  let minX = Infinity
-  let maxX = -Infinity
-  let minY = Infinity
-  let maxY = -Infinity
-
-  for (let r = 0; r < map.height; r++) {
-    for (let q = 0; q < map.width; q++) {
-      const { x, y } = axialToPixel(q, r, HEX_SIZE)
-      minX = Math.min(minX, x)
-      maxX = Math.max(maxX, x)
-      minY = Math.min(minY, y)
-      maxY = Math.max(maxY, y)
-    }
-  }
-
+  const { minX, maxX, minY, maxY } = oddqCenterExtents(map)
   const originX = PADDING - minX + HEX_SIZE
   const originY = PADDING - minY + HEX_SIZE
   const width = maxX - minX + HEX_SIZE * 2 + PADDING * 2
@@ -94,24 +95,87 @@ function hexFieldBounds(
   originX: number,
   originY: number,
 ): Rect {
-  let minX = Infinity
-  let maxX = -Infinity
-  let minY = Infinity
-  let maxY = -Infinity
+  const { minX, maxX, minY, maxY } = oddqCenterExtents(map)
+  return {
+    x: minX + originX - HEX_SIZE,
+    y: minY + originY - HEX_SIZE,
+    width: maxX - minX + HEX_SIZE * 2,
+    height: maxY - minY + HEX_SIZE * 2,
+  }
+}
+
+function drawHoverOutline(
+  ctx: CanvasRenderingContext2D,
+  map: MapData,
+  hover: { q: number; r: number },
+  originX: number,
+  originY: number,
+) {
+  if (!inBounds(map, hover.q, hover.r)) return
+  const { x, y } = axialToPixel(hover.q, hover.r, HEX_SIZE)
+  const cx = x + originX
+  const cy = y + originY
+  const corners = hexCorners(cx, cy, HEX_SIZE)
+  ctx.beginPath()
+  ctx.moveTo(corners[0]!.x, corners[0]!.y)
+  for (let i = 1; i < corners.length; i++) {
+    ctx.lineTo(corners[i]!.x, corners[i]!.y)
+  }
+  ctx.closePath()
+  ctx.strokeStyle = '#f5f0e6'
+  ctx.lineWidth = 2
+  ctx.lineJoin = 'miter'
+  ctx.stroke()
+}
+
+/** Paint terrain fills, strokes, and optional q,r labels (no hover). */
+function paintHexGrid(
+  ctx: CanvasRenderingContext2D,
+  map: MapData,
+  originX: number,
+  originY: number,
+  fillAlpha: number,
+  showMap: boolean,
+) {
+  const cellCount = map.width * map.height
+  const showLabels = cellCount <= LABEL_CELL_LIMIT && HEX_SIZE >= 18
 
   for (let r = 0; r < map.height; r++) {
     for (let q = 0; q < map.width; q++) {
+      const terrain = getTerrain(map, q, r)!
       const { x, y } = axialToPixel(q, r, HEX_SIZE)
       const cx = x + originX
       const cy = y + originY
-      minX = Math.min(minX, cx - HEX_SIZE)
-      maxX = Math.max(maxX, cx + HEX_SIZE)
-      minY = Math.min(minY, cy - HEX_SIZE)
-      maxY = Math.max(maxY, cy + HEX_SIZE)
+      const corners = hexCorners(cx, cy, HEX_SIZE)
+
+      ctx.beginPath()
+      ctx.moveTo(corners[0]!.x, corners[0]!.y)
+      for (let i = 1; i < corners.length; i++) {
+        ctx.lineTo(corners[i]!.x, corners[i]!.y)
+      }
+      ctx.closePath()
+
+      if (fillAlpha > 0) {
+        ctx.globalAlpha = fillAlpha
+        ctx.fillStyle = TERRAIN_COLORS[terrain]
+        ctx.fill()
+        ctx.globalAlpha = 1
+      }
+
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)'
+      ctx.lineWidth = 1
+      ctx.lineJoin = 'miter'
+      ctx.stroke()
+
+      if (showLabels) {
+        ctx.fillStyle = showMap ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.45)'
+        ctx.font = '10px ui-monospace, monospace'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(`${q},${r}`, cx, cy)
+      }
     }
   }
-
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
 /** Pixel rect of the drawn underlay (may extend past the hex field). */
@@ -283,6 +347,8 @@ export function HexCanvas({
   const [internalViewScale, setInternalViewScale] = useState(1)
   const [spaceHeld, setSpaceHeld] = useState(false)
   const [panning, setPanning] = useState(false)
+  /** Static scene (underlay + grid) — hover is composited on top to avoid full redraw. */
+  const sceneCacheRef = useRef<HTMLCanvasElement | null>(null)
   const viewScale = viewScaleProp ?? internalViewScale
   const layout = computeSceneLayout(map, mapImages, align)
   const showMap = layerMode === 'map' || layerMode === 'both'
@@ -393,19 +459,21 @@ export function HexCanvas({
     align.fitWidth,
   ])
 
+  // Rebuild static scene cache when map / underlay / layers change (not on hover).
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
     const dpr = window.devicePixelRatio || 1
-    canvas.width = Math.floor(layout.width * dpr)
-    canvas.height = Math.floor(layout.height * dpr)
-    canvas.style.width = `${layout.width}px`
-    canvas.style.height = `${layout.height}px`
+    const w = Math.floor(layout.width * dpr)
+    const h = Math.floor(layout.height * dpr)
+    let cache = sceneCacheRef.current
+    if (!cache || cache.width !== w || cache.height !== h) {
+      cache = document.createElement('canvas')
+      cache.width = w
+      cache.height = h
+      sceneCacheRef.current = cache
+    }
+    const ctx = cache.getContext('2d')
+    if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-
     ctx.fillStyle = '#1a1f24'
     ctx.fillRect(0, 0, layout.width, layout.height)
 
@@ -415,63 +483,37 @@ export function HexCanvas({
 
     if (showGrid) {
       const fillAlpha = showMap && mapImages.length > 0 ? gridOpacity : 1
+      paintHexGrid(ctx, map, layout.originX, layout.originY, fillAlpha, showMap && mapImages.length > 0)
+    }
+  }, [map, layout, mapImages, layerMode, align, gridOpacity, showMap, showGrid])
 
-      for (let r = 0; r < map.height; r++) {
-        for (let q = 0; q < map.width; q++) {
-          const terrain = getTerrain(map, q, r)!
-          const { x, y } = axialToPixel(q, r, HEX_SIZE)
-          const cx = x + layout.originX
-          const cy = y + layout.originY
-          // Full HEX_SIZE — flat-top centers already use classic spacing; no inset/gap.
-          const corners = hexCorners(cx, cy, HEX_SIZE)
+  // Composite cache + hover outline onto the visible canvas.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const cache = sceneCacheRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
 
-          ctx.beginPath()
-          ctx.moveTo(corners[0]!.x, corners[0]!.y)
-          for (let i = 1; i < corners.length; i++) {
-            ctx.lineTo(corners[i]!.x, corners[i]!.y)
-          }
-          ctx.closePath()
+    const dpr = window.devicePixelRatio || 1
+    const w = Math.floor(layout.width * dpr)
+    const h = Math.floor(layout.height * dpr)
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w
+      canvas.height = h
+    }
+    canvas.style.width = `${layout.width}px`
+    canvas.style.height = `${layout.height}px`
 
-          if (fillAlpha > 0) {
-            ctx.globalAlpha = fillAlpha
-            ctx.fillStyle = TERRAIN_COLORS[terrain]
-            ctx.fill()
-            ctx.globalAlpha = 1
-          }
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    if (cache) {
+      ctx.drawImage(cache, 0, 0)
+    }
 
-          const isHover = hover?.q === q && hover?.r === r
-          ctx.strokeStyle = isHover ? '#f5f0e6' : 'rgba(0,0,0,0.45)'
-          // Stroke sits on the shared edge (no radius shrink); cells meet edge-to-edge.
-          ctx.lineWidth = isHover ? 2 : 1
-          ctx.lineJoin = 'miter'
-          ctx.stroke()
-
-          // Labels = odd-q offset indices used by paint/hit-test (0-based).
-          if (HEX_SIZE >= 18) {
-            ctx.fillStyle = showMap ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.45)'
-            ctx.font = '10px ui-monospace, monospace'
-            ctx.textAlign = 'center'
-            ctx.textBaseline = 'middle'
-            ctx.fillText(`${q},${r}`, cx, cy)
-          }
-        }
-      }
-    } else if (showMap && hover) {
-      // Outline hovered hex even in map-only mode for painting feedback
-      const { x, y } = axialToPixel(hover.q, hover.r, HEX_SIZE)
-      const cx = x + layout.originX
-      const cy = y + layout.originY
-      const corners = hexCorners(cx, cy, HEX_SIZE)
-      ctx.beginPath()
-      ctx.moveTo(corners[0]!.x, corners[0]!.y)
-      for (let i = 1; i < corners.length; i++) {
-        ctx.lineTo(corners[i]!.x, corners[i]!.y)
-      }
-      ctx.closePath()
-      ctx.strokeStyle = '#f5f0e6'
-      ctx.lineWidth = 2
-      ctx.lineJoin = 'miter'
-      ctx.stroke()
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    if (hover) {
+      drawHoverOutline(ctx, map, hover, layout.originX, layout.originY)
     }
   }, [map, hover, layout, mapImages, layerMode, align, gridOpacity, showMap, showGrid])
 
