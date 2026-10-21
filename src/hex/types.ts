@@ -25,7 +25,8 @@ export const TERRAIN_COLORS: Record<Terrain, string> = {
   water: '#3a6ea5',
 }
 
-export const DEFAULT_MAP_SIZE = 12
+/** Default hexes across; closer to Hanko printed density than the old 12. */
+export const DEFAULT_MAP_SIZE = 40
 export const MIN_MAP_SIZE = 4
-export const MAX_MAP_SIZE = 32
+export const MAX_MAP_SIZE = 64
 export const STORAGE_KEY = 'war-gaming-map-v1'
