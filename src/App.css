@@ -63,7 +63,9 @@
 
 .palette,
 .size-controls,
-.file-controls {
+.file-controls,
+.layer-controls,
+.align-controls {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
@@ -72,7 +74,9 @@
 
 .palette__btn,
 .file-controls button,
-.size-controls button {
+.size-controls button,
+.layer-controls button,
+.align-controls button {
   appearance: none;
   border: 1px solid rgba(232, 228, 220, 0.2);
   background: rgba(255, 255, 255, 0.04);
@@ -82,6 +86,35 @@
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
+}
+
+.layer-controls button.is-active {
+  border-color: #f0ead8;
+  background: rgba(240, 234, 216, 0.12);
+}
+
+.align-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: #b8c0c8;
+}
+
+.align-controls__check {
+  margin-right: 0.25rem;
+}
+
+.align-controls input[type='range'] {
+  width: 7rem;
+  accent-color: #c5d6a1;
+}
+
+.align-controls__value {
+  min-width: 2.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: #8a949e;
 }
 
 .palette__btn {
@@ -123,7 +156,9 @@
 
 .palette__btn:hover,
 .file-controls button:hover,
-.size-controls button:hover {
+.size-controls button:hover,
+.layer-controls button:hover,
+.align-controls button:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 

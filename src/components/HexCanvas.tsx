@@ -1,6 +1,11 @@
 import { useEffect, useRef, type MouseEvent } from 'react'
 import { axialToPixel, hexCorners, pixelToAxial } from '../hex/math'
 import { getTerrain, inBounds } from '../hex/map'
+import {
+  type LoadedMapImage,
+  type MapImageAlign,
+  type MapLayerMode,
+} from '../hex/mapImage'
 import { TERRAIN_COLORS, type MapData, type Terrain } from '../hex/types'
 
 const HEX_SIZE = 28
@@ -12,6 +17,11 @@ interface HexCanvasProps {
   hover: { q: number; r: number } | null
   onHover: (hex: { q: number; r: number } | null) => void
   onPaint: (q: number, r: number) => void
+  mapImages?: LoadedMapImage[]
+  layerMode?: MapLayerMode
+  align?: MapImageAlign
+  /** Opacity of terrain fill when both map and grid are shown (0–1). */
+  gridOpacity?: number
 }
 
 function mapPixelSize(map: MapData): { width: number; height: number; originX: number; originY: number } {
@@ -37,10 +47,76 @@ function mapPixelSize(map: MapData): { width: number; height: number; originX: n
   return { width, height, originX, originY }
 }
 
-export function HexCanvas({ map, selectedTerrain, hover, onHover, onPaint }: HexCanvasProps) {
+/** Hex field bounding box in canvas pixels (centers ± hex size). */
+function hexFieldBounds(
+  map: MapData,
+  originX: number,
+  originY: number,
+): { x: number; y: number; width: number; height: number } {
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+
+  for (let r = 0; r < map.height; r++) {
+    for (let q = 0; q < map.width; q++) {
+      const { x, y } = axialToPixel(q, r, HEX_SIZE)
+      const cx = x + originX
+      const cy = y + originY
+      minX = Math.min(minX, cx - HEX_SIZE)
+      maxX = Math.max(maxX, cx + HEX_SIZE)
+      minY = Math.min(minY, cy - HEX_SIZE)
+      maxY = Math.max(maxY, cy + HEX_SIZE)
+    }
+  }
+
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+function drawMapUnderlay(
+  ctx: CanvasRenderingContext2D,
+  images: LoadedMapImage[],
+  field: { x: number; y: number; width: number; height: number },
+  align: MapImageAlign,
+) {
+  if (images.length === 0) return
+
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+
+  // Primary image aligned to hex field; extra tiles drawn sequentially to the right.
+  let cursorX = field.x + align.offsetX
+  const baseY = field.y + align.offsetY
+
+  for (let i = 0; i < images.length; i++) {
+    const img = images[i]!
+    const fitScale = field.width / img.naturalWidth
+    const scale = align.fitWidth ? fitScale * align.scale : align.scale
+    const dw = img.naturalWidth * scale
+    const dh = img.naturalHeight * scale
+    const dx = i === 0 ? cursorX : cursorX
+    const dy = baseY
+    ctx.drawImage(img.source, dx, dy, dw, dh)
+    cursorX += dw
+  }
+}
+
+export function HexCanvas({
+  map,
+  selectedTerrain,
+  hover,
+  onHover,
+  onPaint,
+  mapImages = [],
+  layerMode = 'both',
+  align = { scale: 1, offsetX: 0, offsetY: 0, fitWidth: true },
+  gridOpacity = 0.45,
+}: HexCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const paintingRef = useRef(false)
   const layout = mapPixelSize(map)
+  const showMap = layerMode === 'map' || layerMode === 'both'
+  const showGrid = layerMode === 'grid' || layerMode === 'both'
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -58,38 +134,68 @@ export function HexCanvas({ map, selectedTerrain, hover, onHover, onPaint }: Hex
     ctx.fillStyle = '#1a1f24'
     ctx.fillRect(0, 0, layout.width, layout.height)
 
-    for (let r = 0; r < map.height; r++) {
-      for (let q = 0; q < map.width; q++) {
-        const terrain = getTerrain(map, q, r)!
-        const { x, y } = axialToPixel(q, r, HEX_SIZE)
-        const cx = x + layout.originX
-        const cy = y + layout.originY
-        const corners = hexCorners(cx, cy, HEX_SIZE - 1)
+    const field = hexFieldBounds(map, layout.originX, layout.originY)
 
-        ctx.beginPath()
-        ctx.moveTo(corners[0]!.x, corners[0]!.y)
-        for (let i = 1; i < corners.length; i++) {
-          ctx.lineTo(corners[i]!.x, corners[i]!.y)
-        }
-        ctx.closePath()
-        ctx.fillStyle = TERRAIN_COLORS[terrain]
-        ctx.fill()
+    if (showMap && mapImages.length > 0) {
+      drawMapUnderlay(ctx, mapImages, field, align)
+    }
 
-        const isHover = hover?.q === q && hover?.r === r
-        ctx.strokeStyle = isHover ? '#f5f0e6' : 'rgba(0,0,0,0.35)'
-        ctx.lineWidth = isHover ? 2 : 1
-        ctx.stroke()
+    if (showGrid) {
+      const fillAlpha = showMap && mapImages.length > 0 ? gridOpacity : 1
 
-        if (HEX_SIZE >= 22) {
-          ctx.fillStyle = 'rgba(0,0,0,0.45)'
-          ctx.font = '10px ui-monospace, monospace'
-          ctx.textAlign = 'center'
-          ctx.textBaseline = 'middle'
-          ctx.fillText(`${q},${r}`, cx, cy)
+      for (let r = 0; r < map.height; r++) {
+        for (let q = 0; q < map.width; q++) {
+          const terrain = getTerrain(map, q, r)!
+          const { x, y } = axialToPixel(q, r, HEX_SIZE)
+          const cx = x + layout.originX
+          const cy = y + layout.originY
+          const corners = hexCorners(cx, cy, HEX_SIZE - 1)
+
+          ctx.beginPath()
+          ctx.moveTo(corners[0]!.x, corners[0]!.y)
+          for (let i = 1; i < corners.length; i++) {
+            ctx.lineTo(corners[i]!.x, corners[i]!.y)
+          }
+          ctx.closePath()
+
+          if (fillAlpha > 0) {
+            ctx.globalAlpha = fillAlpha
+            ctx.fillStyle = TERRAIN_COLORS[terrain]
+            ctx.fill()
+            ctx.globalAlpha = 1
+          }
+
+          const isHover = hover?.q === q && hover?.r === r
+          ctx.strokeStyle = isHover ? '#f5f0e6' : 'rgba(0,0,0,0.45)'
+          ctx.lineWidth = isHover ? 2 : 1
+          ctx.stroke()
+
+          if (HEX_SIZE >= 22) {
+            ctx.fillStyle = showMap ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.45)'
+            ctx.font = '10px ui-monospace, monospace'
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            ctx.fillText(`${q},${r}`, cx, cy)
+          }
         }
       }
+    } else if (showMap && hover) {
+      // Outline hovered hex even in map-only mode for painting feedback
+      const { x, y } = axialToPixel(hover.q, hover.r, HEX_SIZE)
+      const cx = x + layout.originX
+      const cy = y + layout.originY
+      const corners = hexCorners(cx, cy, HEX_SIZE - 1)
+      ctx.beginPath()
+      ctx.moveTo(corners[0]!.x, corners[0]!.y)
+      for (let i = 1; i < corners.length; i++) {
+        ctx.lineTo(corners[i]!.x, corners[i]!.y)
+      }
+      ctx.closePath()
+      ctx.strokeStyle = '#f5f0e6'
+      ctx.lineWidth = 2
+      ctx.stroke()
     }
-  }, [map, hover, layout])
+  }, [map, hover, layout, mapImages, layerMode, align, gridOpacity, showMap, showGrid])
 
   function eventToHex(e: MouseEvent<HTMLCanvasElement>): { q: number; r: number } | null {
     const canvas = canvasRef.current

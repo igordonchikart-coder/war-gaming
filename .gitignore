@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Map sources: PSD and oversized originals (export WebP 2048–4096 into public/map/)
+public/map/*.psd
+public/map.png
+public/map.jpg
+public/map.jpeg
+*.psd
