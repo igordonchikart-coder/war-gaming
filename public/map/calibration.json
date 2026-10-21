@@ -1,17 +1,19 @@
 {
-  "version": 1,
-  "source": "public/map.webp auto-detect (AC pitch + multipoint LS)",
+  "version": 2,
+  "source": "public/map.webp Y-edge + AC pitch + visual nudge + light affine shear",
   "imageWidth": 11731,
   "imageHeight": 9933,
   "hexSize": 22,
   "gridWidth": 69,
   "gridHeight": 51,
   "mapAlign": {
-    "scaleX": 0.20213947,
-    "scaleY": 0.20455945,
-    "offsetX": -63.93,
-    "offsetY": -67.1012,
+    "scaleX": 0.20245399,
+    "scaleY": 0.20322729,
+    "offsetX": -62.625767,
+    "offsetY": -58.884463,
+    "shearX": -0.00035,
+    "shearY": 0.00085,
     "fitWidth": false
   },
-  "errorNote": "≈0.15 hex median residual, up to ≈0.25 hex at far corners; use 2-point calib to touch up"
+  "errorNote": "\u22480.1\u20130.2 hex residual; scan mildly non-linear \u2014 use 2-point calib to touch up far corners"
 }

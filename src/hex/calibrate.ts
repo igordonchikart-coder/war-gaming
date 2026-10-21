@@ -51,10 +51,16 @@ export function canvasLocalToImagePx(
   sy: number,
 ): CalibPoint | null {
   if (!(sx > 0) || !(sy > 0)) return null
-  // Underlay top-left in local space: field corner is (−HEX_SIZE, −HEX_SIZE) + offset.
+  // Underlay: local = (−HEX_SIZE + offset) + [sx, shearX; shearY, sy] * image
+  const shearX = align.shearX ?? 0
+  const shearY = align.shearY ?? 0
+  const lx = local.x + HEX_SIZE - align.offsetX
+  const ly = local.y + HEX_SIZE - align.offsetY
+  const det = sx * sy - shearX * shearY
+  if (!(Math.abs(det) > 1e-12)) return null
   return {
-    x: (local.x + HEX_SIZE - align.offsetX) / sx,
-    y: (local.y + HEX_SIZE - align.offsetY) / sy,
+    x: (sy * lx - shearX * ly) / det,
+    y: (-shearY * lx + sx * ly) / det,
   }
 }
 

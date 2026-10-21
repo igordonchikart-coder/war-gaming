@@ -35,6 +35,7 @@ import {
   DEFAULT_MAP_HEIGHT,
   DEFAULT_MAP_WIDTH,
   LABEL_CELL_LIMIT,
+  LEGACY_STORAGE_KEYS,
   MAX_MAP_SIZE,
   MIN_MAP_SIZE,
   STORAGE_KEY,
@@ -85,11 +86,22 @@ function buildMapAlign(
     scaleY: align.scaleY,
     offsetX: align.offsetX,
     offsetY: align.offsetY,
+    shearX: align.shearX ?? 0,
+    shearY: align.shearY ?? 0,
     fitWidth: align.fitWidth,
     viewZoom,
     viewportFit,
     layerMode,
     gridOpacity,
+  }
+}
+
+/** Drop stale v1 keys that still hold fitWidth Scale≈0.96 and override new defaults. */
+function clearLegacyAlignStorage() {
+  try {
+    for (const key of LEGACY_STORAGE_KEYS) localStorage.removeItem(key)
+  } catch {
+    // ignore quota / private mode
   }
 }
 
@@ -123,6 +135,8 @@ function applyMapAlignToState(
     scaleY: persist.scaleY,
     offsetX: persist.offsetX,
     offsetY: persist.offsetY,
+    shearX: persist.shearX ?? 0,
+    shearY: persist.shearY ?? 0,
     fitWidth: persist.fitWidth,
   })
   // Default to contain so old saves still show the full sheet on load.
@@ -413,6 +427,7 @@ export function MapEditor() {
     resetCalibrationSession()
     setStatus('Автокалибровка…')
     const { align: next, fromFile } = await loadShippedCalibration()
+    clearLegacyAlignStorage()
     setAlign(next)
     setMap((prev) => {
       if (prev.width === AUTO_CALIB_GRID_WIDTH && prev.height === AUTO_CALIB_GRID_HEIGHT) {
@@ -423,6 +438,13 @@ export function MapEditor() {
     setWidthInput(String(AUTO_CALIB_GRID_WIDTH))
     setHeightInput(String(AUTO_CALIB_GRID_HEIGHT))
     setViewportFit('contain')
+    // Force-write new absolute calib so stale LS (Scale≈0.96) cannot stick.
+    const persist = buildMapAlign(next, viewScale, layerMode, gridOpacity, 'contain')
+    try {
+      localStorage.setItem(ALIGN_STORAGE_KEY, JSON.stringify(persist))
+    } catch {
+      // ignore
+    }
     const src = fromFile ? '/map/calibration.json' : 'встроенная'
     setStatus(
       `Автокалибровка применена (${src}) · X ${next.scaleX.toFixed(4)} · Y ${next.scaleY.toFixed(4)} · ` +
@@ -772,7 +794,7 @@ export function MapEditor() {
               onClick={() => {
                 void handleAutoCalibrate()
               }}
-              title="Применить автокалибровку map.webp (scaleX/Y + offset, сетка 69×51). Погрешность ~0.15 гекса."
+              title="Применить автокалибровку map.webp (scaleX/Y + offset + shear, сетка 69×51). Перезаписывает localStorage."
             >
               Автокалибровка
             </button>
@@ -788,11 +810,21 @@ export function MapEditor() {
               type="button"
               onClick={() => {
                 resetCalibrationSession()
-                setAlign({ ...AUTO_CALIBRATION })
+                clearLegacyAlignStorage()
+                const next = { ...AUTO_CALIBRATION }
+                setAlign(next)
                 setGridOpacity(0.45)
                 setViewportFit('contain')
+                try {
+                  localStorage.setItem(
+                    ALIGN_STORAGE_KEY,
+                    JSON.stringify(buildMapAlign(next, viewScale, layerMode, 0.45, 'contain')),
+                  )
+                } catch {
+                  // ignore
+                }
               }}
-              title="Вернуть встроенную автокалибровку (не Fit width)"
+              title="Вернуть встроенную автокалибровку и записать в localStorage (не Fit width)"
             >
               Сброс
             </button>
@@ -881,6 +913,8 @@ function loadInitialDocument(): {
   layerMode: MapLayerMode
   gridOpacity: number
 } {
+  clearLegacyAlignStorage()
+
   const fallback = {
     map: createEmptyMap(),
     align: { ...DEFAULT_MAP_ALIGN },
@@ -906,6 +940,8 @@ function loadInitialDocument(): {
           scaleY: persist.scaleY,
           offsetX: persist.offsetX,
           offsetY: persist.offsetY,
+          shearX: persist.shearX ?? 0,
+          shearY: persist.shearY ?? 0,
           fitWidth: persist.fitWidth,
         },
         viewZoom:
@@ -931,6 +967,8 @@ function loadInitialDocument(): {
         scaleY: alignOnly.scaleY,
         offsetX: alignOnly.offsetX,
         offsetY: alignOnly.offsetY,
+        shearX: alignOnly.shearX ?? 0,
+        shearY: alignOnly.shearY ?? 0,
         fitWidth: alignOnly.fitWidth,
       },
       viewZoom:

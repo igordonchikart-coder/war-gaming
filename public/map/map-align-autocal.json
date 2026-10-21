@@ -3524,10 +3524,12 @@
     "plain"
   ],
   "mapAlign": {
-    "scaleX": 0.20213947,
-    "scaleY": 0.20455945,
-    "offsetX": -63.93,
-    "offsetY": -67.1012,
+    "scaleX": 0.20245399,
+    "scaleY": 0.20322729,
+    "offsetX": -62.625767,
+    "offsetY": -58.884463,
+    "shearX": -0.00035,
+    "shearY": 0.00085,
     "fitWidth": false,
     "viewportFit": "contain",
     "layerMode": "both",

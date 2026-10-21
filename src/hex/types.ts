@@ -16,6 +16,10 @@ export interface MapAlignPersist {
   scaleY: number
   offsetX: number
   offsetY: number
+  /** Optional affine shear (canvas Δx from image y). */
+  shearX?: number
+  /** Optional affine shear (canvas Δy from image x). */
+  shearY?: number
   fitWidth: boolean
   /** Scene zoom from pinch / ctrl+wheel. */
   viewZoom?: number
@@ -65,6 +69,12 @@ export const MAX_MAP_SIZE = 256
 export const WARN_MAP_SIZE = 200
 /** Skip per-hex q,r labels when cell count exceeds this (LOD). */
 export const LABEL_CELL_LIMIT = 2500
-export const STORAGE_KEY = 'war-gaming-map-v1'
+/**
+ * Bump when shipped absolute auto-calibration changes so stale localStorage
+ * (e.g. old fitWidth Scale≈0.96 / offset≈33) cannot override new defaults.
+ */
+export const STORAGE_KEY = 'war-gaming-map-v2'
 /** Separate key for last calibration snapshot (mirrors mapAlign in the map JSON). */
-export const ALIGN_STORAGE_KEY = 'war-gaming-map-align-v1'
+export const ALIGN_STORAGE_KEY = 'war-gaming-map-align-v2'
+/** Legacy keys — cleared on autocalibrate / first load of v2. */
+export const LEGACY_STORAGE_KEYS = ['war-gaming-map-v1', 'war-gaming-map-align-v1'] as const

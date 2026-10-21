@@ -2,17 +2,19 @@ import type { MapImageAlign } from './mapImage'
 
 /**
  * Offline auto-calibration for `public/map.webp` (~11731×9933) vs flat-top odd-q
- * overlay (`HEX_SIZE` = 22). Derived from image autocorrelation (column/row pitch)
- * + multi-point least-squares on hex centers (TL→BR).
+ * overlay (`HEX_SIZE` = 22). Horizontal Y-edge rows + column pitch (AC/FFT) +
+ * light affine shear for scan tilt.
  *
- * Residual vs printed Y-markers: ~0.15 hex median, up to ~0.25 hex at far corners
- * (scan aspect is slightly non-linear). Use «Калибровка 2 точки» for a corner touch-up.
+ * Residual vs printed Y-markers: typically ≈0.1–0.2 hex; far corners can be worse
+ * where the scan is non-linear. Use «Калибровка 2 точки» to touch up a corner.
  */
 export const AUTO_CALIBRATION: MapImageAlign = {
-  scaleX: 0.20213947,
-  scaleY: 0.20455945,
-  offsetX: -63.93,
-  offsetY: -67.1012,
+  scaleX: 0.20433437,
+  scaleY: 0.20431635,
+  offsetX: -65.863878,
+  offsetY: -62.178335,
+  shearX: -0.00035,
+  shearY: 0.00085,
   fitWidth: false,
 }
 
@@ -22,13 +24,13 @@ export const AUTO_CALIB_GRID_HEIGHT = 51
 
 /** Human-readable uncertainty for status / docs. */
 export const AUTO_CALIB_ERROR_NOTE =
-  'погрешность ≈0.15 гекса (медиана), до ≈0.25 на дальних углах — при необходимости дожмите «Калибровка 2 точки»'
+  'погрешность ≈0.1–0.2 гекса (скан слегка нелинеен) — при необходимости дожмите «Калибровка 2 точки»'
 
 /** Optional runtime override URL (same numbers shipped in-repo). */
 export const CALIBRATION_JSON_URL = '/map/calibration.json'
 
 export interface CalibrationFile {
-  version: 1
+  version: 2
   source: string
   imageWidth: number
   imageHeight: number
@@ -53,12 +55,15 @@ export function parseCalibrationFile(raw: unknown): MapImageAlign | null {
   const obj = raw as Record<string, unknown>
   const align = obj.mapAlign ?? obj
   if (!isMapImageAlign(align)) return null
+  const a = align as MapImageAlign
   return {
-    scaleX: align.scaleX,
-    scaleY: align.scaleY,
-    offsetX: align.offsetX,
-    offsetY: align.offsetY,
-    fitWidth: align.fitWidth === undefined ? false : Boolean(align.fitWidth),
+    scaleX: a.scaleX,
+    scaleY: a.scaleY,
+    offsetX: a.offsetX,
+    offsetY: a.offsetY,
+    shearX: typeof a.shearX === 'number' && Number.isFinite(a.shearX) ? a.shearX : 0,
+    shearY: typeof a.shearY === 'number' && Number.isFinite(a.shearY) ? a.shearY : 0,
+    fitWidth: a.fitWidth === undefined ? false : Boolean(a.fitWidth),
   }
 }
 

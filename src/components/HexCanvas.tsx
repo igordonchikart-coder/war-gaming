@@ -294,7 +294,9 @@ function drawMapUnderlay(
 
   // Primary image aligned to hex field; extra tiles drawn sequentially to the right.
   // Source stays at natural pixels (no preload downscale). Fit/zoom only via draw + CSS.
-  // Independent scaleX/scaleY corrects printed-grid aspect drift vs mathematical hexes.
+  // Independent scaleX/scaleY + optional shearX/shearY (affine) vs printed-grid drift.
+  const shearX = align.shearX ?? 0
+  const shearY = align.shearY ?? 0
   let cursorX = field.x + align.offsetX
   const baseY = field.y + align.offsetY
 
@@ -307,7 +309,18 @@ function drawMapUnderlay(
     const shrinking = dw < img.naturalWidth - 0.5 || dh < img.naturalHeight - 0.5
     ctx.imageSmoothingEnabled = shrinking
     if (shrinking) ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(img.source, 0, 0, img.naturalWidth, img.naturalHeight, cursorX, baseY, dw, dh)
+
+    if (shearX !== 0 || shearY !== 0) {
+      // Multiply into current CTM (keeps DPR / scene scale): 
+      // x' = sx*ix + shearX*iy + cursorX; y' = shearY*ix + sy*iy + baseY
+      // transform(a,b,c,d,e,f): x' = a*x + c*y + e; y' = b*x + d*y + f
+      ctx.save()
+      ctx.transform(sx, shearY, shearX, sy, cursorX, baseY)
+      ctx.drawImage(img.source, 0, 0)
+      ctx.restore()
+    } else {
+      ctx.drawImage(img.source, 0, 0, img.naturalWidth, img.naturalHeight, cursorX, baseY, dw, dh)
+    }
     cursorX += dw
   }
 }
@@ -520,6 +533,8 @@ export function HexCanvas({
     align.scaleY,
     align.offsetX,
     align.offsetY,
+    align.shearX,
+    align.shearY,
     align.fitWidth,
   ])
 

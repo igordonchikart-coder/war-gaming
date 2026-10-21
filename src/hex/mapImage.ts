@@ -38,6 +38,15 @@ export interface MapImageAlign {
   offsetX: number
   offsetY: number
   /**
+   * Affine shear: canvas Δx from image y (`local_x += shearX * iy`).
+   * Corrects mild scan tilt / non-orthogonal printed grid.
+   */
+  shearX?: number
+  /**
+   * Affine shear: canvas Δy from image x (`local_y += shearY * ix`).
+   */
+  shearY?: number
+  /**
    * When true, underlay width matches hex field width (calibration vs grid).
    * Independent of viewport framing («Вся карта» / «По ширине»).
    * Manual scaleX/Y or 2-point calib turn this off (fit is a starting point only).
@@ -51,10 +60,12 @@ export interface MapImageAlign {
  * Fit-width start is off: absolute canvas-px / image-px scales.
  */
 export const DEFAULT_MAP_ALIGN: MapImageAlign = {
-  scaleX: 0.20213947,
-  scaleY: 0.20455945,
-  offsetX: -63.93,
-  offsetY: -67.1012,
+  scaleX: 0.20245399,
+  scaleY: 0.20322729,
+  offsetX: -62.625767,
+  offsetY: -58.884463,
+  shearX: -0.00035,
+  shearY: 0.00085,
   fitWidth: false,
 }
 

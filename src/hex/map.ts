@@ -27,6 +27,15 @@ export function parseMapAlign(raw: unknown): MapAlignPersist | undefined {
   const fitWidth = obj.fitWidth === undefined ? true : Boolean(obj.fitWidth)
   const result: MapAlignPersist = { scaleX, scaleY, offsetX, offsetY, fitWidth }
 
+  if (obj.shearX !== undefined) {
+    const shearX = Number(obj.shearX)
+    if (Number.isFinite(shearX)) result.shearX = shearX
+  }
+  if (obj.shearY !== undefined) {
+    const shearY = Number(obj.shearY)
+    if (Number.isFinite(shearY)) result.shearY = shearY
+  }
+
   if (obj.viewZoom !== undefined) {
     const viewZoom = Number(obj.viewZoom)
     if (Number.isFinite(viewZoom)) result.viewZoom = viewZoom
