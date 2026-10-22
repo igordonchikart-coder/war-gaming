@@ -27,13 +27,13 @@ export const AUTO_CALIBRATION: MapImageAlign = {
   ...(isWarpMesh(baked.warpMesh) ? { warpMesh: baked.warpMesh } : {}),
 }
 
-/** Suggested odd-q grid covering Map2 printed hexes = 74×37. */
-export const AUTO_CALIB_GRID_WIDTH = 74
-export const AUTO_CALIB_GRID_HEIGHT = 37
+/** Suggested odd-q grid covering Map2 printed hexes = 23×11. */
+export const AUTO_CALIB_GRID_WIDTH = 23
+export const AUTO_CALIB_GRID_HEIGHT = 11
 
 /** Human-readable uncertainty for status / docs. */
 export const AUTO_CALIB_ERROR_NOTE =
-  'TPS-варп по 9 якорям (углы+середины+центр); сетка идеальная flat-top 74×37 — подложка Map2 садится на неё'
+  'TPS-варп по 9 якорям (углы+середины+центр); сетка идеальная flat-top 23×11 — подложка Map2 садится на неё'
 
 /** Optional runtime override URL (same numbers shipped in-repo). */
 export const CALIBRATION_JSON_URL = '/map/calibration.json'

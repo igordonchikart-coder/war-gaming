@@ -87,16 +87,16 @@ export interface MapImageAlign {
 }
 
 /**
- * Default underlay align = shipped auto-calibration for Map2.png (74×37 flat-top).
+ * Default underlay align = shipped auto-calibration for Map2.png (23×11 flat-top).
  * (see `src/hex/autoCalibrate.ts` / `public/map/calibration.json`).
  */
 export const DEFAULT_MAP_ALIGN: MapImageAlign = {
-  scaleX: 0.11818505308973659,
-  scaleY: 0.11879217131217401,
-  offsetX: -194.22863783764515,
-  offsetY: -72.83500295133223,
-  shearX: 0,
-  shearY: 0,
+  scaleX: 0.036472999349010854,
+  scaleY: 0.03714752241015404,
+  offsetX: -30.158634193608677,
+  offsetY: -20.309532377340844,
+  shearX: -0.0003023956936238793,
+  shearY: -0.000163644606617456,
   fitWidth: false,
 }
 

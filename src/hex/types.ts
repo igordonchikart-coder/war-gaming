@@ -65,11 +65,11 @@ export const TERRAIN_COLORS: Record<Terrain, string> = {
 }
 
 /**
- * Default hex grid for flat-top odd-q Map2.png (~22917×13302) = 74×37
- * (fewer cells than Hanko 69×51).
+ * Default hex grid for flat-top odd-q Map2.png (~22917×13302) = 23×11
+ * (printed hexes ~3× larger than the mistaken 74×37).
  */
-export const DEFAULT_MAP_WIDTH = 74
-export const DEFAULT_MAP_HEIGHT = 37
+export const DEFAULT_MAP_WIDTH = 23
+export const DEFAULT_MAP_HEIGHT = 11
 /** @deprecated Prefer DEFAULT_MAP_WIDTH / DEFAULT_MAP_HEIGHT. */
 export const DEFAULT_MAP_SIZE = DEFAULT_MAP_WIDTH
 export const MIN_MAP_SIZE = 4
@@ -81,12 +81,12 @@ export const WARN_MAP_SIZE = 200
 export const LABEL_CELL_LIMIT = 2500
 /**
  * Bump when shipped absolute auto-calibration changes so stale localStorage
- * (pointy 66×44 / Hanko flat 69×51) cannot override Map2 74×37.
+ * (74×37 / pointy 66×44 / Hanko) cannot override Map2 23×11.
  */
-export const STORAGE_KEY = 'war-gaming-map-v5'
+export const STORAGE_KEY = 'war-gaming-map-v6'
 /** Separate key for last calibration snapshot (mirrors mapAlign in the map JSON). */
-export const ALIGN_STORAGE_KEY = 'war-gaming-map-align-v5'
-/** Legacy keys — cleared on autocalibrate / first load of v5. */
+export const ALIGN_STORAGE_KEY = 'war-gaming-map-align-v6'
+/** Legacy keys — cleared on autocalibrate / first load of v6. */
 export const LEGACY_STORAGE_KEYS = [
   'war-gaming-map-v1',
   'war-gaming-map-align-v1',
@@ -96,4 +96,6 @@ export const LEGACY_STORAGE_KEYS = [
   'war-gaming-map-align-v3',
   'war-gaming-map-v4',
   'war-gaming-map-align-v4',
+  'war-gaming-map-v5',
+  'war-gaming-map-align-v5',
 ] as const
