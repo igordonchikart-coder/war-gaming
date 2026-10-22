@@ -639,7 +639,7 @@ export function MapEditor() {
   }
 
   function fieldWidthForAlign(): number {
-    return hexFieldPixelWidth(mapRef.current.width, mapRef.current.height)
+    return hexFieldPixelWidth(mapRef.current.width)
   }
 
   function primaryImageWidth(): number {
@@ -913,7 +913,7 @@ export function MapEditor() {
             </button>
           </div>
           <p className="nav-menu__hint" role="note">
-            Активна: {underlayLabel}. Map2 — новая PNG (pointy-top). После смены — «Автокалибровка».
+            Активна: {underlayLabel}. Map2 — PNG flat-top 74×37. После смены — «Автокалибровка».
           </p>
         </NavMenu>
 
@@ -1056,7 +1056,7 @@ export function MapEditor() {
                   void handleAutoCalibrate()
                   closeMenu()
                 }}
-                title="Автокалибровка Map2 (scaleX/Y + offset + warp, сетка 66×44, pointy-top)."
+                title="Автокалибровка Map2 (scaleX/Y + offset + warp, сетка 74×37, flat-top)."
               >
                 Автокалибровка
               </button>
@@ -1108,7 +1108,7 @@ export function MapEditor() {
               </button>
             </div>
             <p className="nav-menu__hint" role="note">
-              Автокалибровка — TPS-варп на pointy-top сетку Map2 (8 якорей, 66×44). Или Open →{' '}
+              Автокалибровка — TPS-варп на flat-top сетку Map2 (9 якорей, 74×37). Или Open →{' '}
               <code>map-align-autocal.json</code>.
             </p>
           </div>
