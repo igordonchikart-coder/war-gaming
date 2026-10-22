@@ -31,7 +31,6 @@ import {
 } from '../hex/mapImage'
 import {
   ALIGN_STORAGE_KEY,
-  DEFAULT_MAP_HEIGHT,
   DEFAULT_MAP_WIDTH,
   LABEL_CELL_LIMIT,
   LEGACY_STORAGE_KEYS,
@@ -54,7 +53,20 @@ import {
   type CalibSessionMarkers,
   type CanvasTool,
 } from './HexCanvas'
+import { NavMenu, useNavMenu } from './NavMenu'
 import { PrecisionField } from './PrecisionField'
+
+const TERRAIN_SHORT: Record<Terrain, string> = {
+  plain: 'Р',
+  forest: 'Л',
+  water: 'В',
+}
+
+const LAYER_SUMMARY: Record<MapLayerMode, string> = {
+  both: 'Оба',
+  map: 'Карта',
+  grid: 'Сетка',
+}
 
 /** Drawn cells = width × height = tiles.length (odd-q rectangular grid). */
 function formatGridSize(map: MapData): string {
@@ -191,6 +203,7 @@ export function MapEditor() {
   const [calibHex2, setCalibHex2] = useState<CalibHex | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const skipAutosaveRef = useRef(true)
+  const { openId, setOpenId } = useNavMenu()
   const mapImagesRef = useRef(mapImages)
   mapImagesRef.current = mapImages
   const mapRef = useRef(map)
@@ -290,6 +303,23 @@ export function MapEditor() {
     setHeightInput(String(h))
     setMap((prev) => resizeMap(prev, w, h))
     setStatus(`Сетка: ${w}×${h} (${w * h} гексов)${sizeWarning(w, h)}`)
+  }
+
+  function nudgeSize(axis: 'w' | 'h', dir: -1 | 1) {
+    const raw = axis === 'w' ? Number(widthInput) : Number(heightInput)
+    const base = Number.isFinite(raw) ? raw : axis === 'w' ? map.width : map.height
+    const next = clampSize(base + dir)
+    if (axis === 'w') setWidthInput(String(next))
+    else setHeightInput(String(next))
+  }
+
+  function closeMenu() {
+    setOpenId(null)
+  }
+
+  function runAndClose(fn: () => void) {
+    fn()
+    closeMenu()
   }
 
   /** Resize grid so field aspect matches the loaded underlay (covers sheet at fit-width). */
@@ -551,173 +581,147 @@ export function MapEditor() {
     ? { map1: calibMap1, map2: calibMap2, hex1: calibHex1, hex2: calibHex2 }
     : undefined
 
+  const toolSummary = tool === 'paint' ? 'Кисть' : 'Рука'
+  const frameSummary =
+    viewportFit === 'free'
+      ? `${(viewScale * 100).toFixed(0)}%`
+      : viewportFit === 'contain'
+        ? 'вся'
+        : 'ширина'
+  const sizeSummary = `${map.width}×${map.height}`
+
   return (
     <div className="editor">
-      <header className="editor__header">
-        <div>
-          <h1>War Gaming</h1>
-          <p className="editor__subtitle">Фаза 0 — редактор гекс-карты</p>
-        </div>
-        <p className="editor__status" role="status">
-          {status}
-          {` · сетка ${formatGridSize(map)}`}
-          {` · зум ${(viewScale * 100).toFixed(0)}%`}
-          {hover ? ` · гекс ${hover.q},${hover.r}` : ''}
-        </p>
-      </header>
+      <nav className="editor__nav" aria-label="Панель редактора">
+        <span className="editor__brand">War Gaming</span>
 
-      <div className="editor__toolbar">
-        <section className="tool-group" aria-label="Инструмент">
-          <span className="tool-group__label">Инструмент</span>
-          <div className="layer-controls">
+        <NavMenu
+          id="tool"
+          openId={openId}
+          onOpenChange={setOpenId}
+          label="Инструмент"
+          summary={toolSummary}
+        >
+          <div className="nav-menu__row">
             <button
               type="button"
-              className={tool === 'paint' ? 'is-active' : ''}
-              onClick={() => setTool('paint')}
+              className={`nav-btn${tool === 'paint' ? ' is-active' : ''}`}
+              onClick={() => {
+                setTool('paint')
+                closeMenu()
+              }}
               title="ЛКМ — рисовать тайл"
             >
               Кисть
             </button>
             <button
               type="button"
-              className={tool === 'pan' ? 'is-active' : ''}
-              onClick={() => setTool('pan')}
+              className={`nav-btn${tool === 'pan' ? ' is-active' : ''}`}
+              onClick={() => {
+                setTool('pan')
+                closeMenu()
+              }}
               title="ЛКМ — двигать карту (также Space+drag / СКМ)"
             >
               Рука
             </button>
           </div>
-        </section>
+        </NavMenu>
 
-        <section className="tool-group" aria-label="Палитра тайлов">
-          <span className="tool-group__label">Тайл</span>
-          <div className="palette">
-            {TERRAINS.map((t) => (
-              <button
-                key={t}
-                type="button"
-                className={`palette__btn${brush === t ? ' is-active' : ''}`}
-                onClick={() => {
-                  setBrush(t)
-                  setTool('paint')
-                }}
-                style={{ ['--swatch' as string]: TERRAIN_COLORS[t] }}
-              >
-                <span className="palette__swatch" aria-hidden />
-                {TERRAIN_LABELS[t]}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="tool-group" aria-label="Размер карты">
-          <span className="tool-group__label">
-            Размер сетки · {map.width}×{map.height} = {map.tiles.length} гексов
-            {(map.width > WARN_MAP_SIZE || map.height > WARN_MAP_SIZE) && (
-              <span className="size-controls__warn"> · &gt;{WARN_MAP_SIZE}</span>
-            )}
-          </span>
-          <div className="size-controls">
-            <label>
-              W
-              <input
-                type="number"
-                min={MIN_MAP_SIZE}
-                max={MAX_MAP_SIZE}
-                value={widthInput}
-                onChange={(e) => setWidthInput(e.target.value)}
-                title={`Столбцы (odd-q), ${MIN_MAP_SIZE}–${MAX_MAP_SIZE}; по умолчанию ${DEFAULT_MAP_WIDTH}; предупреждение при >${WARN_MAP_SIZE}`}
-              />
-            </label>
-            <label>
-              H
-              <input
-                type="number"
-                min={MIN_MAP_SIZE}
-                max={MAX_MAP_SIZE}
-                value={heightInput}
-                onChange={(e) => setHeightInput(e.target.value)}
-                title={`Строки (odd-q), ${MIN_MAP_SIZE}–${MAX_MAP_SIZE}; по умолчанию ${DEFAULT_MAP_HEIGHT}; предупреждение при >${WARN_MAP_SIZE}`}
-              />
-            </label>
-            <button type="button" onClick={applySize}>
-              Применить
-            </button>
-            <button
-              type="button"
-              onClick={applySizeFromUnderlay}
-              disabled={mapImages.length === 0}
-              title="Подобрать H под aspect подложки, сохранив текущий W (или дефолт). Сетка сможет покрыть лист при Fit width."
-            >
-              По подложке
-            </button>
-            <span
-              className="size-controls__hint"
-              title={`Подписи q,r на гексах (0-based odd-q). Скрываются при >${LABEL_CELL_LIMIT} клеток. Потолок ${MAX_MAP_SIZE}, мягкое предупреждение >${WARN_MAP_SIZE}.`}
-            >
-              {map.tiles.length > LABEL_CELL_LIMIT ? 'без подписей (LOD)' : 'подписи q,r'}
-            </span>
-          </div>
-        </section>
-
-        <section className="tool-group" aria-label="Слои подложки">
-          <span className="tool-group__label">Слои</span>
-          <div className="layer-controls">
+        <NavMenu
+          id="layers"
+          openId={openId}
+          onOpenChange={setOpenId}
+          label="Слои"
+          summary={LAYER_SUMMARY[layerMode]}
+        >
+          <div className="nav-menu__row">
             {LAYER_OPTIONS.map((opt) => (
               <button
                 key={opt.id}
                 type="button"
-                className={layerMode === opt.id ? 'is-active' : ''}
-                onClick={() => setLayerMode(opt.id)}
+                className={`nav-btn${layerMode === opt.id ? ' is-active' : ''}`}
+                onClick={() => {
+                  setLayerMode(opt.id)
+                  closeMenu()
+                }}
               >
                 {opt.label}
               </button>
             ))}
-            <label
-              className="align-controls__check"
-              title="По умолчанию FULL: /map.webp без даунскейла. Включите только если тормозит."
-            >
-              <input
-                type="checkbox"
-                checked={fastUnderlay}
-                onChange={(e) => setFastUnderlay(e.target.checked)}
-              />
-              Быстрая подложка
-            </label>
           </div>
-        </section>
+          <label
+            className="align-controls__check"
+            title="По умолчанию FULL: /map.webp без даунскейла. Включите только если тормозит."
+          >
+            <input
+              type="checkbox"
+              checked={fastUnderlay}
+              onChange={(e) => setFastUnderlay(e.target.checked)}
+            />
+            Быстрая подложка
+          </label>
+        </NavMenu>
 
-        <section className="tool-group" aria-label="Кадр карты">
-          <span className="tool-group__label">Кадр</span>
-          <div className="layer-controls">
+        <NavMenu
+          id="frame"
+          openId={openId}
+          onOpenChange={setOpenId}
+          label="Кадр"
+          summary={frameSummary}
+        >
+          <div className="nav-menu__row">
             <button
               type="button"
-              className={viewportFit === 'contain' ? 'is-active' : ''}
-              onClick={() => setViewportFit('contain')}
+              className={`nav-btn${viewportFit === 'contain' ? ' is-active' : ''}`}
+              onClick={() => {
+                setViewportFit('contain')
+                closeMenu()
+              }}
               title="Показать весь лист map.webp в области холста (contain, с letterbox)"
             >
               Вся карта
             </button>
             <button
               type="button"
-              className={viewportFit === 'width' ? 'is-active' : ''}
-              onClick={() => setViewportFit('width')}
+              className={`nav-btn${viewportFit === 'width' ? ' is-active' : ''}`}
+              onClick={() => {
+                setViewportFit('width')
+                closeMenu()
+              }}
               title="Подогнать ширину листа под холст (низ может требовать прокрутки)"
             >
               По ширине
             </button>
-            <span className="size-controls__hint" title="Щипок / Zoom переводят в ручной режим">
-              {viewportFit === 'free' ? 'ручной зум' : viewportFit === 'contain' ? 'весь лист' : 'по ширине'}
-            </span>
           </div>
-        </section>
+          <PrecisionField
+            label="Zoom"
+            title="Зум сцены (щипок / Ctrl+колёсико). Сбрасывает авто-кадр в ручной режим"
+            value={viewScale}
+            min={MIN_VIEW_SCALE}
+            max={MAX_VIEW_SCALE}
+            step={0.01}
+            decimals={2}
+            onChange={handleViewScaleChange}
+          />
+          <p className="nav-menu__hint">
+            Щипок / Zoom → ручной режим
+            {viewportFit === 'free' ? ' · сейчас ручной' : ''}
+          </p>
+        </NavMenu>
 
-        <section className="tool-group tool-group--align" aria-label="Выравнивание карты">
-          <span className="tool-group__label">Выравнивание</span>
-          <div className="align-controls">
+        <NavMenu
+          id="align"
+          openId={openId}
+          onOpenChange={setOpenId}
+          label="Выравнивание"
+          summary={`X${align.scaleX.toFixed(2)} Y${align.scaleY.toFixed(2)}`}
+          accent={Boolean(calibPhase)}
+        >
+          <div className="nav-menu__panel--wide">
             <label
               className="align-controls__check"
-              title="Старт: ширина подложки = ширина гекс-поля. Ручной Scale X/Y или калибровка 2 точки выключают Fit (значения запекаются)."
+              title="Старт: ширина подложки = ширина гекс-поля. Ручной Scale X/Y или калибровка 2 точки выключают Fit."
             >
               <input
                 type="checkbox"
@@ -725,7 +729,6 @@ export function MapEditor() {
                 onChange={(e) => {
                   const on = e.target.checked
                   if (on) {
-                    // Fit again as a fresh start (relative multipliers ≈ 1).
                     updateAlign({ fitWidth: true, scaleX: 1, scaleY: 1 })
                     return
                   }
@@ -739,54 +742,48 @@ export function MapEditor() {
               />
               Fit width → сетка
             </label>
-            <PrecisionField
-              label="Scale X"
-              title="Горизонтальный масштаб подложки относительно сетки (не зум сцены). Ручная правка выключает Fit."
-              value={align.scaleX}
-              min={0.05}
-              max={3}
-              step={0.01}
-              decimals={2}
-              onChange={(scaleX) => updateAlign({ scaleX })}
-            />
-            <PrecisionField
-              label="Scale Y"
-              title="Вертикальный масштаб (растяжение). Если слева ровно, а справа уезжает — крутите Scale Y."
-              value={align.scaleY}
-              min={0.05}
-              max={3}
-              step={0.01}
-              decimals={2}
-              onChange={(scaleY) => updateAlign({ scaleY })}
-            />
-            <PrecisionField
-              label="X"
-              value={align.offsetX}
-              min={-4000}
-              max={4000}
-              step={1}
-              decimals={0}
-              onChange={(offsetX) => updateAlign({ offsetX })}
-            />
-            <PrecisionField
-              label="Y"
-              value={align.offsetY}
-              min={-4000}
-              max={4000}
-              step={1}
-              decimals={0}
-              onChange={(offsetY) => updateAlign({ offsetY })}
-            />
-            <PrecisionField
-              label="Zoom"
-              title="Зум сцены (щипок / Ctrl+колёсико / шкала). Сбрасывает авто-кадр в ручной режим"
-              value={viewScale}
-              min={MIN_VIEW_SCALE}
-              max={MAX_VIEW_SCALE}
-              step={0.01}
-              decimals={2}
-              onChange={handleViewScaleChange}
-            />
+            <div className="nav-menu__row">
+              <PrecisionField
+                label="Scale X"
+                title="Горизонтальный масштаб подложки относительно сетки (не зум сцены)."
+                value={align.scaleX}
+                min={0.05}
+                max={3}
+                step={0.01}
+                decimals={2}
+                onChange={(scaleX) => updateAlign({ scaleX })}
+              />
+              <PrecisionField
+                label="Scale Y"
+                title="Вертикальный масштаб (растяжение)."
+                value={align.scaleY}
+                min={0.05}
+                max={3}
+                step={0.01}
+                decimals={2}
+                onChange={(scaleY) => updateAlign({ scaleY })}
+              />
+            </div>
+            <div className="nav-menu__row">
+              <PrecisionField
+                label="Offset X"
+                value={align.offsetX}
+                min={-4000}
+                max={4000}
+                step={1}
+                decimals={0}
+                onChange={(offsetX) => updateAlign({ offsetX })}
+              />
+              <PrecisionField
+                label="Offset Y"
+                value={align.offsetY}
+                min={-4000}
+                max={4000}
+                step={1}
+                decimals={0}
+                onChange={(offsetY) => updateAlign({ offsetY })}
+              />
+            </div>
             <PrecisionField
               label="Сетка α"
               value={gridOpacity}
@@ -797,92 +794,218 @@ export function MapEditor() {
               onChange={setGridOpacity}
               disabled={layerMode === 'map'}
             />
-            <button
-              type="button"
-              className="is-active"
-              onClick={() => {
-                void handleAutoCalibrate()
-              }}
-              title="Применить автокалибровку map.webp (scaleX/Y + offset + shear, сетка 69×51). Перезаписывает localStorage."
-            >
-              Автокалибровка
-            </button>
-            <button
-              type="button"
-              className={calibPhase ? 'is-active' : ''}
-              onClick={() => (calibPhase ? cancelTwoPointCalib() : startTwoPointCalib())}
-              title="Две точки на печатной сетке + два гекса оверлея → scaleX/Y + offset (без вращения)"
-            >
-              {calibPhase ? 'Отмена привязки' : 'Калибровка 2 точки'}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                resetCalibrationSession()
-                clearLegacyAlignStorage()
-                const next = { ...AUTO_CALIBRATION }
-                setAlign(next)
-                setGridOpacity(0.45)
-                setViewportFit('contain')
-                try {
-                  localStorage.setItem(
-                    ALIGN_STORAGE_KEY,
-                    JSON.stringify(buildMapAlign(next, viewScale, layerMode, 0.45, 'contain')),
-                  )
-                } catch {
-                  // ignore
-                }
-              }}
-              title="Вернуть встроенную автокалибровку и записать в localStorage (не Fit width)"
-            >
-              Сброс
-            </button>
-            <button
-              type="button"
-              onClick={handleSaveCalibration}
-              title="Записать scaleX/Y/offset/zoom/слой в localStorage и в JSON карты"
-            >
-              Сохранить калибровку
-            </button>
-            <p className="align-controls__hint" role="note">
-              Один клик: «Автокалибровка» — TPS-варп подложки на идеальную flat-top сетку
-              (8 якорей, LS v3). Или Load <code>public/map/map-align-autocal.json</code>.
+            <div className="nav-menu__row">
+              <button
+                type="button"
+                className="nav-btn is-active"
+                onClick={() => {
+                  void handleAutoCalibrate()
+                  closeMenu()
+                }}
+                title="Автокалибровка map.webp (scaleX/Y + offset + warp, сетка 69×51)."
+              >
+                Автокалибровка
+              </button>
+              <button
+                type="button"
+                className={`nav-btn${calibPhase ? ' is-active' : ''}`}
+                onClick={() => {
+                  if (calibPhase) cancelTwoPointCalib()
+                  else startTwoPointCalib()
+                  closeMenu()
+                }}
+                title="Две точки на печатной сетке + два гекса оверлея"
+              >
+                {calibPhase ? 'Отмена привязки' : 'Калибровка 2 точки'}
+              </button>
+              <button
+                type="button"
+                className="nav-btn"
+                onClick={() => {
+                  resetCalibrationSession()
+                  clearLegacyAlignStorage()
+                  const next = { ...AUTO_CALIBRATION }
+                  setAlign(next)
+                  setGridOpacity(0.45)
+                  setViewportFit('contain')
+                  try {
+                    localStorage.setItem(
+                      ALIGN_STORAGE_KEY,
+                      JSON.stringify(
+                        buildMapAlign(next, viewScale, layerMode, 0.45, 'contain'),
+                      ),
+                    )
+                  } catch {
+                    // ignore
+                  }
+                  closeMenu()
+                }}
+                title="Вернуть встроенную автокалибровку"
+              >
+                Сброс
+              </button>
+              <button
+                type="button"
+                className="nav-btn"
+                onClick={() => runAndClose(handleSaveCalibration)}
+                title="Записать калибровку в localStorage и JSON карты"
+              >
+                Сохранить калибровку
+              </button>
+            </div>
+            <p className="nav-menu__hint" role="note">
+              Автокалибровка — TPS-варп на flat-top сетку (8 якорей). Или Load{' '}
+              <code>public/map/map-align-autocal.json</code>.
             </p>
           </div>
-        </section>
+        </NavMenu>
 
-        <section className="tool-group" aria-label="Сохранение">
-          <span className="tool-group__label">Файл</span>
+        <NavMenu
+          id="size"
+          openId={openId}
+          onOpenChange={setOpenId}
+          label="Размер"
+          summary={sizeSummary}
+        >
+          <div className="size-controls">
+            <label title={`Столбцы ${MIN_MAP_SIZE}–${MAX_MAP_SIZE}`}>
+              W
+              <button
+                type="button"
+                className="size-nudge"
+                disabled={Number(widthInput) <= MIN_MAP_SIZE}
+                onClick={() => nudgeSize('w', -1)}
+                aria-label="W: меньше"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                min={MIN_MAP_SIZE}
+                max={MAX_MAP_SIZE}
+                value={widthInput}
+                onChange={(e) => setWidthInput(e.target.value)}
+              />
+              <button
+                type="button"
+                className="size-nudge"
+                disabled={Number(widthInput) >= MAX_MAP_SIZE}
+                onClick={() => nudgeSize('w', 1)}
+                aria-label="W: больше"
+              >
+                +
+              </button>
+            </label>
+            <label title={`Строки ${MIN_MAP_SIZE}–${MAX_MAP_SIZE}`}>
+              H
+              <button
+                type="button"
+                className="size-nudge"
+                disabled={Number(heightInput) <= MIN_MAP_SIZE}
+                onClick={() => nudgeSize('h', -1)}
+                aria-label="H: меньше"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                min={MIN_MAP_SIZE}
+                max={MAX_MAP_SIZE}
+                value={heightInput}
+                onChange={(e) => setHeightInput(e.target.value)}
+              />
+              <button
+                type="button"
+                className="size-nudge"
+                disabled={Number(heightInput) >= MAX_MAP_SIZE}
+                onClick={() => nudgeSize('h', 1)}
+                aria-label="H: больше"
+              >
+                +
+              </button>
+            </label>
+          </div>
+          <div className="nav-menu__row">
+            <button type="button" className="nav-btn" onClick={() => runAndClose(applySize)}>
+              Применить
+            </button>
+            <button
+              type="button"
+              className="nav-btn"
+              onClick={() => runAndClose(applySizeFromUnderlay)}
+              disabled={mapImages.length === 0}
+              title="Подобрать H под aspect подложки"
+            >
+              По подложке
+            </button>
+          </div>
+          <p className="nav-menu__hint">
+            {map.tiles.length} гексов
+            {(map.width > WARN_MAP_SIZE || map.height > WARN_MAP_SIZE) && (
+              <span className="size-controls__warn"> · &gt;{WARN_MAP_SIZE}</span>
+            )}
+            {' · '}
+            {map.tiles.length > LABEL_CELL_LIMIT ? 'без подписей (LOD)' : 'подписи q,r'}
+          </p>
+        </NavMenu>
+
+        <NavMenu id="file" openId={openId} onOpenChange={setOpenId} label="Файл">
           <div className="file-controls">
-            <button type="button" onClick={handleNew}>
+            <button type="button" onClick={() => runAndClose(handleNew)}>
               Новая
             </button>
-            <button type="button" onClick={handleSaveDownload}>
-              Скачать JSON
+            <button type="button" onClick={() => runAndClose(handleSaveDownload)}>
+              JSON
             </button>
-            <button type="button" onClick={() => fileInputRef.current?.click()}>
-              Открыть файл
-            </button>
-            <button type="button" onClick={handleSaveLocal}>
+            <button type="button" onClick={() => runAndClose(handleSaveLocal)}>
               Save LS
             </button>
-            <button type="button" onClick={handleLoadLocal}>
+            <button type="button" onClick={() => runAndClose(handleLoadLocal)}>
               Load LS
             </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="application/json,.json"
-              hidden
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) handleLoadFile(file)
-                e.target.value = ''
+            <button
+              type="button"
+              onClick={() => {
+                closeMenu()
+                fileInputRef.current?.click()
               }}
-            />
+            >
+              Open
+            </button>
           </div>
-        </section>
-      </div>
+        </NavMenu>
+
+        <div className="palette palette--inline" role="group" aria-label="Палитра тайлов">
+          {TERRAINS.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`palette__btn palette__btn--short${brush === t ? ' is-active' : ''}`}
+              onClick={() => {
+                setBrush(t)
+                setTool('paint')
+              }}
+              title={TERRAIN_LABELS[t]}
+              style={{ ['--swatch' as string]: TERRAIN_COLORS[t] }}
+            >
+              <span className="palette__swatch" aria-hidden />
+              {TERRAIN_SHORT[t]}
+            </button>
+          ))}
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,.json"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) handleLoadFile(file)
+            e.target.value = ''
+          }}
+        />
+      </nav>
 
       <div className="editor__canvas-wrap">
         <HexCanvas
@@ -897,7 +1020,6 @@ export function MapEditor() {
           gridOpacity={gridOpacity}
           viewScale={viewScale}
           onViewScaleChange={(scale) => {
-            // Pinch / ctrl-wheel inside canvas already marks free via onViewportFitChange.
             setViewScale(scale)
           }}
           tool={tool}
@@ -909,6 +1031,13 @@ export function MapEditor() {
           onCalibHexClick={handleCalibHexClick}
         />
       </div>
+
+      <p className="editor__statusbar" role="status">
+        {status}
+        {` · ${formatGridSize(map)}`}
+        {` · ${(viewScale * 100).toFixed(0)}%`}
+        {hover ? ` · ${hover.q},${hover.r}` : ''}
+      </p>
     </div>
   )
 }

@@ -24,7 +24,7 @@ function decimalsFromStep(step: number): number {
 }
 
 /**
- * Native range (smooth drag) + number input + ± nudges for precise calibration.
+ * Compact ± nudges + number input for precise calibration (no range slider).
  */
 export function PrecisionField({
   label,
@@ -56,17 +56,6 @@ export function PrecisionField({
       <label className="precision-field__label" htmlFor={id}>
         {label}
       </label>
-      <input
-        id={id}
-        className="precision-field__range"
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={clamp(value, min, max)}
-        disabled={disabled}
-        onChange={(e) => commit(Number(e.target.value))}
-      />
       <div className="precision-field__exact">
         <button
           type="button"
@@ -78,6 +67,7 @@ export function PrecisionField({
           −
         </button>
         <input
+          id={id}
           className="precision-field__number"
           type="number"
           min={min}
