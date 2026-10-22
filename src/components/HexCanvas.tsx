@@ -86,6 +86,11 @@ interface HexCanvasProps {
   onCalibMapClick?: (point: CalibMapClick) => void
   /** Overlay hex pick (hex1 / hex2). */
   onCalibHexClick?: (hex: { q: number; r: number }) => void
+  /**
+   * Double-click a hex (paint tool, not calibrating) → open terrain picker.
+   * `clientX`/`clientY` are viewport coords for anchoring a popover.
+   */
+  onDoubleClickHex?: (hex: { q: number; r: number }, clientX: number, clientY: number) => void
 }
 
 function clampViewScale(n: number): number {
@@ -476,6 +481,7 @@ export function HexCanvas({
   calibMarkers,
   onCalibMapClick,
   onCalibHexClick,
+  onDoubleClickHex,
 }: HexCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -1028,8 +1034,18 @@ export function HexCanvas({
     }
 
     if (tool !== 'paint') return
+    // detail > 1 = 2nd+ click of a multi-click — leave paint to dblclick picker.
+    if (e.detail > 1) return
     paintingRef.current = true
     paintAt(e)
+  }
+
+  function onDoubleClick(e: ReactMouseEvent<HTMLCanvasElement>) {
+    e.preventDefault()
+    if (calibPhase || tool !== 'paint' || spaceHeldRef.current) return
+    const hex = eventToHex(e)
+    if (!hex) return
+    onDoubleClickHex?.(hex, e.clientX, e.clientY)
   }
 
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -1118,6 +1134,7 @@ export function HexCanvas({
               onHover(null)
             }
           }}
+          onDoubleClick={onDoubleClick}
           onAuxClick={(e) => {
             // Block middle-click default (autoscroll / open tab) while panning.
             if (e.button === 1) e.preventDefault()
@@ -1129,7 +1146,7 @@ export function HexCanvas({
             calibTitle ??
             (tool === 'pan' || spaceHeld
               ? 'Рука: перетащите карту'
-              : `Кисть: ${selectedTerrain} · Space/СКМ — pan · щипок — зум`)
+              : `Кисть: ${selectedTerrain} · двойной клик — тип · Space/СКМ — pan · щипок — зум`)
           }
         />
       </div>

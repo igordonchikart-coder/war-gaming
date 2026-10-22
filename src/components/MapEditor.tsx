@@ -16,6 +16,7 @@ import {
 import {
   clampSize,
   createEmptyMap,
+  getTerrain,
   parseMap,
   parseMapAlign,
   resizeMap,
@@ -201,7 +202,15 @@ export function MapEditor() {
   const [calibMap2, setCalibMap2] = useState<CalibPoint | null>(null)
   const [calibHex1, setCalibHex1] = useState<CalibHex | null>(null)
   const [calibHex2, setCalibHex2] = useState<CalibHex | null>(null)
+  /** Double-click terrain picker anchored near the cursor. */
+  const [terrainPicker, setTerrainPicker] = useState<{
+    q: number
+    r: number
+    x: number
+    y: number
+  } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const terrainPickerRef = useRef<HTMLDivElement>(null)
   const skipAutosaveRef = useRef(true)
   const { openId, setOpenId } = useNavMenu()
   const mapImagesRef = useRef(mapImages)
@@ -273,12 +282,107 @@ export function MapEditor() {
     return () => window.clearTimeout(timer)
   }, [map, align, viewScale, layerMode, gridOpacity, viewportFit])
 
+  /** Dismissing the picker via a canvas click should not also paint that hex. */
+  const suppressNextPaintRef = useRef(false)
+  /**
+   * First click of a double-click still hits the brush; remember prior terrain
+   * briefly so opening the picker can restore it (Esc then leaves the hex unchanged).
+   */
+  const recentPaintUndoRef = useRef<{
+    q: number
+    r: number
+    prev: Terrain
+    at: number
+  } | null>(null)
+
   const paint = useCallback(
     (q: number, r: number) => {
-      setMap((prev) => setTerrain(prev, q, r, brush))
+      if (suppressNextPaintRef.current) {
+        suppressNextPaintRef.current = false
+        return
+      }
+      setMap((prev) => {
+        const before = getTerrain(prev, q, r)
+        if (before != null && before !== brush) {
+          recentPaintUndoRef.current = { q, r, prev: before, at: performance.now() }
+        }
+        return setTerrain(prev, q, r, brush)
+      })
     },
     [brush],
   )
+
+  const closeTerrainPicker = useCallback(() => {
+    setTerrainPicker(null)
+  }, [])
+
+  const openTerrainPicker = useCallback(
+    (hex: { q: number; r: number }, clientX: number, clientY: number) => {
+      setOpenId(null)
+      // Undo brush paint from the first click of this double-click (if any).
+      const undo = recentPaintUndoRef.current
+      if (
+        undo &&
+        undo.q === hex.q &&
+        undo.r === hex.r &&
+        performance.now() - undo.at < 500
+      ) {
+        setMap((prev) => setTerrain(prev, undo.q, undo.r, undo.prev))
+        recentPaintUndoRef.current = null
+      }
+      // Nudge slightly so the menu sits under the cursor without covering the hex center.
+      const pad = 8
+      const approxW = 148
+      const approxH = 16 + TERRAINS.length * 34
+      const x = Math.min(Math.max(pad, clientX + 6), window.innerWidth - approxW - pad)
+      const y = Math.min(Math.max(pad, clientY + 6), window.innerHeight - approxH - pad)
+      setTerrainPicker({ q: hex.q, r: hex.r, x, y })
+    },
+    [setOpenId],
+  )
+
+  const applyTerrainFromPicker = useCallback(
+    (terrain: Terrain) => {
+      if (!terrainPicker) return
+      const { q, r } = terrainPicker
+      setMap((prev) => setTerrain(prev, q, r, terrain))
+      setBrush(terrain)
+      setTool('paint')
+      setTerrainPicker(null)
+      setStatus(`Гекс ${q},${r} → ${TERRAIN_LABELS[terrain]}`)
+    },
+    [terrainPicker],
+  )
+
+  // Esc / click outside closes the hex terrain picker without applying.
+  useEffect(() => {
+    if (!terrainPicker) return
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeTerrainPicker()
+      }
+    }
+
+    function onPointer(e: MouseEvent | PointerEvent) {
+      const el = terrainPickerRef.current
+      if (!el) return
+      if (e.target instanceof Node && !el.contains(e.target)) {
+        if (e.target instanceof Element && e.target.closest('.hex-canvas')) {
+          suppressNextPaintRef.current = true
+        }
+        closeTerrainPicker()
+      }
+    }
+
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onPointer, true)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onPointer, true)
+    }
+  }, [terrainPicker, closeTerrainPicker])
 
   function sizeWarning(w: number, h: number): string {
     if (w > WARN_MAP_SIZE || h > WARN_MAP_SIZE) {
@@ -1029,8 +1133,36 @@ export function MapEditor() {
           calibMarkers={calibMarkers}
           onCalibMapClick={handleCalibMapClick}
           onCalibHexClick={handleCalibHexClick}
+          onDoubleClickHex={openTerrainPicker}
         />
       </div>
+
+      {terrainPicker ? (
+        <div
+          ref={terrainPickerRef}
+          className="hex-terrain-picker"
+          role="menu"
+          aria-label={`Тип гекса ${terrainPicker.q},${terrainPicker.r}`}
+          style={{ left: terrainPicker.x, top: terrainPicker.y }}
+        >
+          {TERRAINS.map((t) => {
+            const current = getTerrain(map, terrainPicker.q, terrainPicker.r)
+            return (
+              <button
+                key={t}
+                type="button"
+                role="menuitem"
+                className={`hex-terrain-picker__btn${current === t ? ' is-active' : ''}`}
+                onClick={() => applyTerrainFromPicker(t)}
+                style={{ ['--swatch' as string]: TERRAIN_COLORS[t] }}
+              >
+                <span className="palette__swatch" aria-hidden />
+                {TERRAIN_LABELS[t]}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
 
       <p className="editor__statusbar" role="status">
         {status}
