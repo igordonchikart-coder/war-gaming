@@ -163,6 +163,12 @@
   align-items: center;
 }
 
+.file-controls__primary {
+  border-color: rgba(240, 234, 216, 0.45);
+  background: rgba(240, 234, 216, 0.14);
+  font-weight: 600;
+}
+
 .palette--inline {
   margin-left: auto;
 }

@@ -149,6 +149,31 @@ function mapWithAlign(
   }
 }
 
+/** Minimal File System Access API surface (Chrome/Edge); not in all TS DOM libs. */
+type SaveFilePickerHandle = {
+  name: string
+  createWritable: () => Promise<{
+    write: (data: Blob | string) => Promise<void>
+    close: () => Promise<void>
+  }>
+}
+
+type ShowSaveFilePickerFn = (options?: {
+  suggestedName?: string
+  types?: Array<{ description?: string; accept: Record<string, string[]> }>
+}) => Promise<SaveFilePickerHandle>
+
+function getShowSaveFilePicker(): ShowSaveFilePickerFn | undefined {
+  const w = window as Window & { showSaveFilePicker?: ShowSaveFilePickerFn }
+  return typeof w.showSaveFilePicker === 'function' ? w.showSaveFilePicker.bind(w) : undefined
+}
+
+/** Full path when host exposes it (e.g. Electron); browsers usually only give the name. */
+function resolveSavedPath(handle: SaveFilePickerHandle): string | undefined {
+  const withPath = handle as SaveFilePickerHandle & { path?: unknown }
+  return typeof withPath.path === 'string' && withPath.path.length > 0 ? withPath.path : undefined
+}
+
 function applyMapAlignToState(
   persist: MapAlignPersist | undefined,
   setters: {
@@ -454,24 +479,59 @@ export function MapEditor() {
     setStatus('Новая карта')
   }
 
-  function handleSaveDownload() {
+  async function handleSaveAs() {
     const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity, viewportFit)
     const json = serializeMap(doc)
+    const suggestedName = 'war-gaming-map.json'
+    const picker = getShowSaveFilePicker()
+
+    if (picker) {
+      try {
+        const handle = await picker({
+          suggestedName,
+          types: [
+            {
+              description: 'Карта War Gaming (JSON)',
+              accept: { 'application/json': ['.json'] },
+            },
+          ],
+        })
+        const writable = await handle.createWritable()
+        await writable.write(json)
+        await writable.close()
+        const where = resolveSavedPath(handle) ?? handle.name
+        setStatus(`Сохранено (карта + калибровка): ${where}`)
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          setStatus('Сохранение отменено')
+          return
+        }
+        setStatus(err instanceof Error ? err.message : 'Ошибка сохранения')
+      }
+      return
+    }
+
+    const typed = window.prompt('Имя файла', suggestedName)?.trim()
+    if (!typed) {
+      setStatus('Сохранение отменено')
+      return
+    }
+    const filename = /\.json$/i.test(typed) ? typed : `${typed}.json`
     const blob = new Blob([json], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `war-gaming-map-${map.width}x${map.height}.json`
+    a.download = filename
     a.click()
     URL.revokeObjectURL(url)
-    setStatus('Карта + калибровка скачаны (mapAlign в JSON)')
+    setStatus(`Сохранено (карта + калибровка): ${filename}`)
   }
 
   function handleSaveLocal() {
     const doc = mapWithAlign(map, align, viewScale, layerMode, gridOpacity, viewportFit)
     localStorage.setItem(STORAGE_KEY, serializeMap(doc))
     localStorage.setItem(ALIGN_STORAGE_KEY, JSON.stringify(doc.mapAlign))
-    setStatus('Сохранено в localStorage (карта + калибровка)')
+    setStatus('В браузере (localStorage): карта + калибровка')
   }
 
   function handleSaveCalibration() {
@@ -1055,14 +1115,26 @@ export function MapEditor() {
 
         <NavMenu id="file" openId={openId} onOpenChange={setOpenId} label="Файл">
           <div className="file-controls">
+            <button
+              type="button"
+              className="file-controls__primary"
+              onClick={() => {
+                closeMenu()
+                void handleSaveAs()
+              }}
+              title="Выбрать папку и имя · карта + калибровка (mapAlign)"
+            >
+              Сохранить как…
+            </button>
+            <button
+              type="button"
+              onClick={() => runAndClose(handleSaveLocal)}
+              title="Только в этом браузере (localStorage), без файла на диске"
+            >
+              В браузер
+            </button>
             <button type="button" onClick={() => runAndClose(handleNew)}>
               Новая
-            </button>
-            <button type="button" onClick={() => runAndClose(handleSaveDownload)}>
-              JSON
-            </button>
-            <button type="button" onClick={() => runAndClose(handleSaveLocal)}>
-              Save LS
             </button>
             <button type="button" onClick={() => runAndClose(handleLoadLocal)}>
               Load LS
@@ -1077,6 +1149,9 @@ export function MapEditor() {
               Open
             </button>
           </div>
+          <p className="nav-menu__hint" role="note">
+            Сохранить как… — карта + калибровка в JSON на диск
+          </p>
         </NavMenu>
 
         <div className="palette palette--inline" role="group" aria-label="Палитра тайлов">
