@@ -118,6 +118,22 @@ function loadHtmlImage(url: string): Promise<HTMLImageElement> {
 }
 
 /**
+ * Prefer ImageBitmap for repeated canvas draws (warp triangles / underlay cache).
+ * Falls back to the original source when createImageBitmap is unavailable.
+ * Never resizes — full natural pixels unless the caller already downscaled.
+ */
+export async function toDrawableBitmap(
+  source: CanvasImageSource,
+): Promise<CanvasImageSource> {
+  if (typeof createImageBitmap !== 'function') return source
+  try {
+    return await createImageBitmap(source as ImageBitmapSource)
+  } catch {
+    return source
+  }
+}
+
+/**
  * Optional downscale for “быстрая подложка”. Not used by default.
  * Returns the original image when already within maxEdge.
  */
@@ -156,16 +172,18 @@ export async function loadMapImage(
   const img = await loadHtmlImage(url)
   if (options.fast) {
     const limited = limitTextureSize(img)
+    const source = await toDrawableBitmap(limited.source)
     return {
-      source: limited.source,
+      source,
       naturalWidth: limited.width,
       naturalHeight: limited.height,
       downscaled: limited.downscaled,
       url,
     }
   }
+  const source = await toDrawableBitmap(img)
   return {
-    source: img,
+    source,
     naturalWidth: img.naturalWidth,
     naturalHeight: img.naturalHeight,
     downscaled: false,

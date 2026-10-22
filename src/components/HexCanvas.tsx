@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import { HEX_SIZE, effectiveUnderlayScales } from '../hex/calibrate'
 import { axialToPixel, hexCorners, pixelToAxial } from '../hex/math'
 import { getTerrain, inBounds } from '../hex/map'
@@ -427,6 +433,30 @@ function clampScroll(viewport: HTMLElement, left: number, top: number) {
   viewport.scrollTop = Math.min(maxTop, Math.max(0, top))
 }
 
+/** Ensure an offscreen layer canvas matches CSS-pixel size × dpr. */
+function ensureLayerCanvas(
+  ref: { current: HTMLCanvasElement | null },
+  cssW: number,
+  cssH: number,
+  dpr: number,
+): HTMLCanvasElement {
+  const w = Math.max(1, Math.floor(cssW * dpr))
+  const h = Math.max(1, Math.floor(cssH * dpr))
+  let canvas = ref.current
+  if (!canvas || canvas.width !== w || canvas.height !== h) {
+    canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    ref.current = canvas
+  }
+  return canvas
+}
+
+/** Commit React zoom state at most this often during a continuous gesture. */
+const ZOOM_COMMIT_MS = 120
+/** After last trackpad-pinch wheel event, bake viewZoom. */
+const WHEEL_GESTURE_END_MS = 140
+
 export function HexCanvas({
   map,
   selectedTerrain,
@@ -451,7 +481,11 @@ export function HexCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const spacerRef = useRef<HTMLDivElement>(null)
   const paintingRef = useRef(false)
+  /** Committed React zoom (navbar / persist). */
   const viewScaleRef = useRef(1)
+  /** Live DOM zoom during pinch/wheel — may lead committed state. */
+  const liveScaleRef = useRef(1)
+  const layoutSizeRef = useRef({ width: 0, height: 0 })
   const spaceHeldRef = useRef(false)
   const viewportFitRef = useRef(viewportFit)
   const panRef = useRef<{
@@ -460,18 +494,28 @@ export function HexCanvas({
     lastY: number
   } | null>(null)
   const pinchRef = useRef<{
-    dist: number
-    scale: number
+    startDist: number
+    startScale: number
     midX: number
     midY: number
   } | null>(null)
+  const zoomRafRef = useRef<number | null>(null)
+  const pendingZoomRef = useRef<{ clientX: number; clientY: number; scale: number } | null>(
+    null,
+  )
+  const commitTimerRef = useRef<number | null>(null)
+  const wheelEndTimerRef = useRef<number | null>(null)
+  const gestureActiveRef = useRef(false)
   const [internalViewScale, setInternalViewScale] = useState(1)
   const [spaceHeld, setSpaceHeld] = useState(false)
   const [panning, setPanning] = useState(false)
-  /** Static scene (underlay + grid) — hover is composited on top to avoid full redraw. */
-  const sceneCacheRef = useRef<HTMLCanvasElement | null>(null)
+  /** Warped underlay at full scene size — rebuilt only when map/align changes. */
+  const underlayCacheRef = useRef<HTMLCanvasElement | null>(null)
+  /** Hex fills/strokes/labels — rebuilt on paint, not on zoom. */
+  const gridCacheRef = useRef<HTMLCanvasElement | null>(null)
   const viewScale = viewScaleProp ?? internalViewScale
   const layout = computeSceneLayout(map, mapImages, align)
+  layoutSizeRef.current = { width: layout.width, height: layout.height }
   const showMap = layerMode === 'map' || layerMode === 'both'
   const showGrid = layerMode === 'grid' || layerMode === 'both'
   const wantPanCursor = tool === 'pan' || spaceHeld || panning
@@ -484,18 +528,20 @@ export function HexCanvas({
   }
 
   useEffect(() => {
-    viewScaleRef.current = viewScale
-  }, [viewScale])
-
-  useEffect(() => {
     viewportFitRef.current = viewportFit
   }, [viewportFit])
 
-  function setViewScale(next: number) {
-    const clamped = clampViewScale(next)
+  function commitViewScale(scale = liveScaleRef.current) {
+    const clamped = clampViewScale(scale)
+    liveScaleRef.current = clamped
     viewScaleRef.current = clamped
     if (viewScaleProp === undefined) setInternalViewScale(clamped)
     onViewScaleChange?.(clamped)
+  }
+
+  function setViewScale(next: number) {
+    gestureActiveRef.current = false
+    commitViewScale(next)
   }
 
   function markFreeFit() {
@@ -503,6 +549,79 @@ export function HexCanvas({
     viewportFitRef.current = 'free'
     onViewportFitChange?.('free')
   }
+
+  /** Apply spacer + CSS scale + scroll in the same frame (no React). */
+  function applyLiveZoom(clientX: number, clientY: number, nextScale: number) {
+    const viewport = viewportRef.current
+    const spacer = spacerRef.current
+    const canvas = canvasRef.current
+    const { width: lw, height: lh } = layoutSizeRef.current
+    if (!viewport || !spacer || !canvas || lw <= 0 || lh <= 0) return
+
+    const oldScale = liveScaleRef.current
+    const clamped = clampViewScale(nextScale)
+    if (Math.abs(clamped - oldScale) < 1e-9) return
+
+    const parentRect = viewport.getBoundingClientRect()
+    const relX = clientX - parentRect.left
+    const relY = clientY - parentRect.top
+    const contentX = (viewport.scrollLeft + relX) / oldScale
+    const contentY = (viewport.scrollTop + relY) / oldScale
+
+    liveScaleRef.current = clamped
+    spacer.style.width = `${lw * clamped}px`
+    spacer.style.height = `${lh * clamped}px`
+    canvas.style.transform = `scale(${clamped})`
+
+    clampScroll(viewport, contentX * clamped - relX, contentY * clamped - relY)
+  }
+
+  function scheduleZoomCommit() {
+    if (commitTimerRef.current != null) return
+    commitTimerRef.current = window.setTimeout(() => {
+      commitTimerRef.current = null
+      commitViewScale()
+    }, ZOOM_COMMIT_MS)
+  }
+
+  function flushZoomCommit() {
+    if (commitTimerRef.current != null) {
+      window.clearTimeout(commitTimerRef.current)
+      commitTimerRef.current = null
+    }
+    commitViewScale()
+    gestureActiveRef.current = false
+  }
+
+  /** Coalesce wheel/pinch scale updates to one DOM write per animation frame. */
+  function scheduleLiveZoom(clientX: number, clientY: number, nextScale: number) {
+    pendingZoomRef.current = { clientX, clientY, scale: nextScale }
+    if (zoomRafRef.current != null) return
+    zoomRafRef.current = requestAnimationFrame(() => {
+      zoomRafRef.current = null
+      const pending = pendingZoomRef.current
+      if (!pending) return
+      pendingZoomRef.current = null
+      applyLiveZoom(pending.clientX, pending.clientY, pending.scale)
+      scheduleZoomCommit()
+    })
+  }
+
+  /** Keep spacer/canvas transform in sync after React re-renders (e.g. hover / navbar zoom). */
+  useLayoutEffect(() => {
+    viewScaleRef.current = viewScale
+    // External fit / navbar zoom: adopt as live scale when not mid-gesture.
+    if (!gestureActiveRef.current) {
+      liveScaleRef.current = viewScale
+    }
+    const spacer = spacerRef.current
+    const canvas = canvasRef.current
+    if (!spacer || !canvas) return
+    const s = liveScaleRef.current
+    spacer.style.width = `${layout.width * s}px`
+    spacer.style.height = `${layout.height * s}px`
+    canvas.style.transform = `scale(${s})`
+  }, [layout.width, layout.height, viewScale, hover, calibMarkers, calibPhase])
 
   /** Scroll so `target` is centered in the viewport at the current scale. */
   function centerTargetInViewport(target: Rect, scale: number) {
@@ -585,45 +704,71 @@ export function HexCanvas({
     align.warpMesh,
   ])
 
-  // Rebuild static scene cache when map / underlay / layers change (not on hover).
+  // Underlay layer: warp mesh runs only when map/align changes — never on zoom/hover.
   useEffect(() => {
     const dpr = window.devicePixelRatio || 1
-    const w = Math.floor(layout.width * dpr)
-    const h = Math.floor(layout.height * dpr)
-    let cache = sceneCacheRef.current
-    if (!cache || cache.width !== w || cache.height !== h) {
-      cache = document.createElement('canvas')
-      cache.width = w
-      cache.height = h
-      sceneCacheRef.current = cache
-    }
+    const cache = ensureLayerCanvas(underlayCacheRef, layout.width, layout.height, dpr)
     const ctx = cache.getContext('2d')
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.fillStyle = '#1a1f24'
     ctx.fillRect(0, 0, layout.width, layout.height)
-
     if (showMap && mapImages.length > 0) {
       drawMapUnderlay(ctx, mapImages, layout.field, align)
     }
+  }, [
+    mapImages,
+    layout.width,
+    layout.height,
+    layout.field.x,
+    layout.field.y,
+    layout.field.width,
+    layout.field.height,
+    align,
+    showMap,
+  ])
 
-    if (showGrid) {
-      const fillAlpha = showMap && mapImages.length > 0 ? gridOpacity : 1
-      paintHexGrid(ctx, map, layout.originX, layout.originY, fillAlpha, showMap && mapImages.length > 0)
-    }
-  }, [map, layout, mapImages, layerMode, align, gridOpacity, showMap, showGrid])
+  // Hex grid layer: rebuild on paint / opacity — not on wheel/pinch.
+  useEffect(() => {
+    const dpr = window.devicePixelRatio || 1
+    const cache = ensureLayerCanvas(gridCacheRef, layout.width, layout.height, dpr)
+    const ctx = cache.getContext('2d')
+    if (!ctx) return
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.clearRect(0, 0, cache.width, cache.height)
+    if (!showGrid) return
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    const fillAlpha = showMap && mapImages.length > 0 ? gridOpacity : 1
+    paintHexGrid(
+      ctx,
+      map,
+      layout.originX,
+      layout.originY,
+      fillAlpha,
+      showMap && mapImages.length > 0,
+    )
+  }, [
+    map,
+    layout.width,
+    layout.height,
+    layout.originX,
+    layout.originY,
+    mapImages.length,
+    gridOpacity,
+    showMap,
+    showGrid,
+  ])
 
-  // Composite cache + hover outline onto the visible canvas.
+  // Composite cached layers + hover/calib (cheap blit — no warp, no hex loop).
   useEffect(() => {
     const canvas = canvasRef.current
-    const cache = sceneCacheRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
     const dpr = window.devicePixelRatio || 1
-    const w = Math.floor(layout.width * dpr)
-    const h = Math.floor(layout.height * dpr)
+    const w = Math.max(1, Math.floor(layout.width * dpr))
+    const h = Math.max(1, Math.floor(layout.height * dpr))
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w
       canvas.height = h
@@ -633,9 +778,10 @@ export function HexCanvas({
 
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-    if (cache) {
-      ctx.drawImage(cache, 0, 0)
-    }
+    const underlay = underlayCacheRef.current
+    const grid = gridCacheRef.current
+    if (underlay) ctx.drawImage(underlay, 0, 0)
+    if (grid && showGrid) ctx.drawImage(grid, 0, 0)
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     if (calibMarkers && calibPhase) {
@@ -647,9 +793,11 @@ export function HexCanvas({
   }, [
     map,
     hover,
-    layout,
+    layout.width,
+    layout.height,
+    layout.originX,
+    layout.originY,
     mapImages,
-    layerMode,
     align,
     gridOpacity,
     showMap,
@@ -658,32 +806,6 @@ export function HexCanvas({
     calibPhase,
   ])
 
-  /** Zoom whole scene (underlay + grid) keeping the point under the cursor fixed. */
-  function zoomTo(clientX: number, clientY: number, nextScale: number) {
-    const viewport = viewportRef.current
-    const spacer = spacerRef.current
-    const oldScale = viewScaleRef.current
-    const clamped = clampViewScale(nextScale)
-    if (!spacer || !viewport || Math.abs(clamped - oldScale) < 1e-6) return
-
-    markFreeFit()
-
-    const spacerRect = spacer.getBoundingClientRect()
-    const parentRect = viewport.getBoundingClientRect()
-    const offsetX = clientX - spacerRect.left
-    const offsetY = clientY - spacerRect.top
-    const contentX = offsetX / oldScale
-    const contentY = offsetY / oldScale
-
-    setViewScale(clamped)
-
-    requestAnimationFrame(() => {
-      const newLeft = spacer.offsetLeft + contentX * clamped - (clientX - parentRect.left)
-      const newTop = spacer.offsetTop + contentY * clamped - (clientY - parentRect.top)
-      clampScroll(viewport, newLeft, newTop)
-    })
-  }
-
   function panBy(dx: number, dy: number) {
     const viewport = viewportRef.current
     if (!viewport) return
@@ -691,6 +813,15 @@ export function HexCanvas({
     viewport.scrollLeft -= dx
     viewport.scrollTop -= dy
   }
+
+  // Tear down gesture timers / rAF on unmount.
+  useEffect(() => {
+    return () => {
+      if (zoomRafRef.current != null) cancelAnimationFrame(zoomRafRef.current)
+      if (commitTimerRef.current != null) window.clearTimeout(commitTimerRef.current)
+      if (wheelEndTimerRef.current != null) window.clearTimeout(wheelEndTimerRef.current)
+    }
+  }, [])
 
   // Space = temporary pan (does not steal typing from number inputs).
   useEffect(() => {
@@ -732,7 +863,7 @@ export function HexCanvas({
     }
   }, [])
 
-  // Wheel zoom (pinch / ctrl) + trackpad pan fallback via scroll deltas.
+  // Wheel zoom (pinch / ctrl) + trackpad pan — live CSS scale, bake zoom throttled/end.
   useEffect(() => {
     const viewport = viewportRef.current
     if (!viewport) return
@@ -741,8 +872,18 @@ export function HexCanvas({
       // Trackpad pinch on Mac synthesizes wheel + ctrlKey; also support ctrl/meta+wheel.
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
+        markFreeFit()
+        gestureActiveRef.current = true
         const factor = Math.exp(-e.deltaY * 0.01)
-        zoomTo(e.clientX, e.clientY, viewScaleRef.current * factor)
+        const base = pendingZoomRef.current?.scale ?? liveScaleRef.current
+        scheduleLiveZoom(e.clientX, e.clientY, base * factor)
+        if (wheelEndTimerRef.current != null) {
+          window.clearTimeout(wheelEndTimerRef.current)
+        }
+        wheelEndTimerRef.current = window.setTimeout(() => {
+          wheelEndTimerRef.current = null
+          flushZoomCommit()
+        }, WHEEL_GESTURE_END_MS)
         return
       }
       // Two-finger trackpad pan: apply deltas ourselves so the canvas under the
@@ -754,12 +895,18 @@ export function HexCanvas({
     }
 
     viewport.addEventListener('wheel', onWheel, { passive: false })
-    return () => viewport.removeEventListener('wheel', onWheel)
-    // zoomTo/panBy close over refs; rebind when layout size changes.
+    return () => {
+      viewport.removeEventListener('wheel', onWheel)
+      if (wheelEndTimerRef.current != null) {
+        window.clearTimeout(wheelEndTimerRef.current)
+        wheelEndTimerRef.current = null
+      }
+    }
+    // scheduleLiveZoom/panBy close over refs; rebind when layout size changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
   }, [layout.width, layout.height])
 
-  // Touch: two-finger pinch + pan together.
+  // Touch: two-finger pinch + pan — scale from gesture start (stable), DOM live.
   useEffect(() => {
     const viewport = viewportRef.current
     if (!viewport) return
@@ -767,12 +914,14 @@ export function HexCanvas({
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
         paintingRef.current = false
+        markFreeFit()
+        gestureActiveRef.current = true
         const a = e.touches[0]!
         const b = e.touches[1]!
         const mid = touchMidpoint(a, b)
         pinchRef.current = {
-          dist: touchDistance(a, b),
-          scale: viewScaleRef.current,
+          startDist: Math.max(1, touchDistance(a, b)),
+          startScale: liveScaleRef.current,
           midX: mid.x,
           midY: mid.y,
         }
@@ -788,23 +937,25 @@ export function HexCanvas({
       const mid = touchMidpoint(a, b)
       const prev = pinchRef.current
 
-      // Pan by midpoint delta first (scroll), then zoom around new midpoint.
+      // Pan by midpoint delta, then zoom around the new midpoint (same frame).
       panBy(mid.x - prev.midX, mid.y - prev.midY)
-
-      if (prev.dist >= 1) {
-        zoomTo(mid.x, mid.y, prev.scale * (dist / prev.dist))
-      }
+      const nextScale = prev.startScale * (dist / prev.startDist)
+      applyLiveZoom(mid.x, mid.y, nextScale)
+      scheduleZoomCommit()
 
       pinchRef.current = {
-        dist,
-        scale: viewScaleRef.current,
+        startDist: prev.startDist,
+        startScale: prev.startScale,
         midX: mid.x,
         midY: mid.y,
       }
     }
 
     const onTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length < 2) pinchRef.current = null
+      if (e.touches.length < 2) {
+        pinchRef.current = null
+        flushZoomCommit()
+      }
     }
 
     viewport.addEventListener('touchstart', onTouchStart, { passive: true })
@@ -938,8 +1089,7 @@ export function HexCanvas({
         ref={spacerRef}
         className="hex-canvas-spacer"
         style={{
-          width: layout.width * viewScale,
-          height: layout.height * viewScale,
+          // Size driven by liveScaleRef (useLayoutEffect / applyLiveZoom) — not React zoom state.
           position: 'relative',
         }}
       >
@@ -953,8 +1103,8 @@ export function HexCanvas({
             top: 0,
             width: layout.width,
             height: layout.height,
-            transform: `scale(${viewScale})`,
             transformOrigin: '0 0',
+            willChange: 'transform',
             touchAction: 'none',
             cursor,
           }}

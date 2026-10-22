@@ -338,6 +338,9 @@
   box-shadow: none;
   user-select: none;
   -webkit-user-drag: none;
+  /* Promote layer for smooth pinch CSS scale (bitmap stays full-res). */
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
 /* Thin status bar */
