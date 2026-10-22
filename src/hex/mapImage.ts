@@ -1,10 +1,23 @@
 /**
- * Prefer full local underlay `public/map.webp` (often gitignored if huge).
- * Falls back to the repo-friendly export in `public/map/` only if the primary fails.
+ * Built-in underlay presets (served from `public/`).
+ * Large masters (Map2.png, map.webp) are gitignored — keep them local.
  */
-export const DEFAULT_MAP_IMAGE_URL = '/map.webp'
+export interface UnderlayPreset {
+  id: string
+  label: string
+  url: string
+}
 
-/** Repo export used when the full `map.webp` is missing or fails to load. */
+export const UNDERLAY_PRESETS: UnderlayPreset[] = [
+  { id: 'map2', label: 'Map2 (PNG)', url: '/map/Map2.png' },
+  { id: 'hanko', label: 'Hanko (map.webp)', url: '/map.webp' },
+  { id: 'base', label: 'Fallback base.webp', url: '/map/base.webp' },
+]
+
+/** Active default: Igor’s Map2.png (pointy-top sheet). */
+export const DEFAULT_MAP_IMAGE_URL = UNDERLAY_PRESETS[0]!.url
+
+/** Repo export used when the full master is missing or fails to load. */
 export const FALLBACK_MAP_IMAGE_URL = '/map/base.webp'
 
 /** Smaller last-resort asset if the primary fallback also fails. */
@@ -74,17 +87,17 @@ export interface MapImageAlign {
 }
 
 /**
- * Default underlay align = shipped auto-calibration for full `map.webp`
+ * Default underlay align = shipped auto-calibration for Map2.png
  * (see `src/hex/autoCalibrate.ts` / `public/map/calibration.json`).
  * Fit-width start is off: absolute canvas-px / image-px scales.
  */
 export const DEFAULT_MAP_ALIGN: MapImageAlign = {
-  scaleX: 0.2071352744006969,
-  scaleY: 0.21006707868221847,
-  offsetX: -66.7056773169919,
-  offsetY: -63.210532755200916,
-  shearX: -3.1477003166301934e-10,
-  shearY: 4.847403493297244e-06,
+  scaleX: 0.12029217424512527,
+  scaleY: 0.1211745056951297,
+  offsetX: -105.37676483160448,
+  offsetY: -67.4554213613577,
+  shearX: 0,
+  shearY: 0,
   fitWidth: false,
 }
 
@@ -198,7 +211,7 @@ const PRIMARY_FALLBACK_CHAIN = [
 
 /**
  * Load primary map, then optional tiles sequentially (never all at once).
- * Primary is always `/map.webp` (full master). Repo WebP exports are fallbacks only.
+ * Primary defaults to Map2.png; falls back to Hanko / repo WebP exports.
  */
 export async function loadMapImagesProgressive(
   primaryUrl = DEFAULT_MAP_IMAGE_URL,
@@ -208,6 +221,10 @@ export async function loadMapImagesProgressive(
 ): Promise<LoadedMapImage[]> {
   const urls = [primaryUrl, ...tileUrls]
   const results: LoadedMapImage[] = []
+  const fallbacks = [
+    '/map.webp',
+    ...PRIMARY_FALLBACK_CHAIN,
+  ] as const
 
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i]!
@@ -218,7 +235,7 @@ export async function loadMapImagesProgressive(
     } catch (err) {
       if (i === 0) {
         let recovered: LoadedMapImage | null = null
-        for (const fallbackUrl of PRIMARY_FALLBACK_CHAIN) {
+        for (const fallbackUrl of fallbacks) {
           if (fallbackUrl === primaryUrl) continue
           try {
             recovered = await loadMapImage(fallbackUrl, options)

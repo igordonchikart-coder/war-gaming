@@ -104,10 +104,10 @@ export function clampSize(n: number): number {
 }
 
 /**
- * Suggest odd-q W×H so the hex field aspect matches the underlay sheet
+ * Suggest odd-r W×H so the hex field aspect matches the underlay sheet
  * (fit-width calibration can then cover the whole leaf).
  *
- * Flat-top span (size units): horiz ≈ 1.5*(cols−1)+2, vert ≈ √3*((rows−1)+0.5)+2.
+ * Pointy-top span (size units): horiz ≈ √3*((cols−1)+0.5)+2, vert ≈ 1.5*(rows−1)+2.
  */
 export function suggestGridSizeForUnderlay(
   imageWidth: number,
@@ -119,11 +119,10 @@ export function suggestGridSizeForUnderlay(
   }
   const cols = clampSize(preferredCols)
   const targetAspect = imageWidth / imageHeight
-  const horizSpan = 1.5 * (cols - 1) + 2
+  const oddBump = 1 // rows>1 → +0.5 col stagger in width formula below
+  const horizSpan = Math.sqrt(3) * (cols - 1 + (oddBump > 0 ? 0.5 : 0)) + 2
   const vertSpan = horizSpan / targetAspect
-  // odd-q: odd columns sit +0.5 row; when cols>1 use that extra half-step
-  const oddBump = cols > 1 ? 0.5 : 0
-  const rows = Math.round((vertSpan - 2) / Math.sqrt(3) - oddBump + 1)
+  const rows = Math.round((vertSpan - 2) / 1.5 + 1)
   return { width: cols, height: clampSize(rows) }
 }
 

@@ -2,14 +2,15 @@ import { axialToPixel } from './math'
 import type { MapImageAlign } from './mapImage'
 
 /**
- * Flat-top hex radius used by HexCanvas (must stay in sync).
+ * Pointy-top hex radius used by HexCanvas (must stay in sync).
  * Exported so 2-point calibration solves in the same pixel space as the grid.
  */
 export const HEX_SIZE = 22
 
-/** Hex field width in canvas px (centers ± HEX_SIZE) — matches HexCanvas.hexFieldBounds. */
-export function hexFieldPixelWidth(mapWidth: number): number {
-  const span = mapWidth <= 1 ? 0 : HEX_SIZE * 1.5 * (mapWidth - 1)
+/** Hex field width in canvas px (centers ± HEX_SIZE) — matches HexCanvas.hexFieldBounds (pointy odd-r). */
+export function hexFieldPixelWidth(mapWidth: number, mapHeight = 2): number {
+  const oddBump = mapHeight > 1 ? 0.5 : 0
+  const span = HEX_SIZE * Math.sqrt(3) * (Math.max(1, mapWidth) - 1 + oddBump)
   return span + HEX_SIZE * 2
 }
 

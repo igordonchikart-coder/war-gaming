@@ -10,6 +10,7 @@ export type NavMenuId =
   | 'tool'
   | 'layers'
   | 'frame'
+  | 'underlay'
   | 'align'
   | 'size'
   | 'file'

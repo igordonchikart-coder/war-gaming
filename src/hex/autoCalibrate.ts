@@ -3,10 +3,10 @@ import { isWarpMesh } from './warp'
 import autoCalibData from './autoCalibData.json'
 
 /**
- * Offline auto-calibration for `public/map.webp` (~11731×9933) vs flat-top odd-q
- * overlay (`HEX_SIZE` = 22). Eight anchors (4 corners + side mids + center) →
- * TPS mesh warping the underlay onto the ideal hex grid. Affine scale/shear
- * remain as a coarse fallback when the mesh is stripped.
+ * Offline auto-calibration for `public/map/Map2.png` (~22917×13302) vs
+ * pointy-top odd-r overlay (`HEX_SIZE` = 22). Eight anchors (4 corners +
+ * side mids + center) → TPS mesh warping the underlay onto the ideal hex
+ * grid. Affine scale/shear remain as a coarse fallback when the mesh is stripped.
  */
 const baked = autoCalibData.mapAlign as MapImageAlign
 
@@ -27,13 +27,13 @@ export const AUTO_CALIBRATION: MapImageAlign = {
   ...(isWarpMesh(baked.warpMesh) ? { warpMesh: baked.warpMesh } : {}),
 }
 
-/** Suggested odd-q grid covering printed labels ≈ columns 10–78, rows 01–51. */
-export const AUTO_CALIB_GRID_WIDTH = 69
-export const AUTO_CALIB_GRID_HEIGHT = 51
+/** Suggested odd-r grid covering Map2 printed hexes ≈ 66×44. */
+export const AUTO_CALIB_GRID_WIDTH = 66
+export const AUTO_CALIB_GRID_HEIGHT = 44
 
 /** Human-readable uncertainty for status / docs. */
 export const AUTO_CALIB_ERROR_NOTE =
-  'TPS-варп по 8 якорям (углы+середины+центр); сетка идеальная flat-top — подложка садится на неё'
+  'TPS-варп по 8 якорям (углы+середины+центр); сетка идеальная pointy-top — подложка Map2 садится на неё'
 
 /** Optional runtime override URL (same numbers shipped in-repo). */
 export const CALIBRATION_JSON_URL = '/map/calibration.json'

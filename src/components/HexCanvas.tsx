@@ -97,13 +97,13 @@ function clampViewScale(n: number): number {
   return Math.min(MAX_VIEW_SCALE, Math.max(MIN_VIEW_SCALE, n))
 }
 
-/** Flat-top odd-q center extents without O(W×H) scan. */
-function oddqCenterExtents(map: MapData): { minX: number; maxX: number; minY: number; maxY: number } {
+/** Pointy-top odd-r center extents without O(W×H) scan. */
+function oddrCenterExtents(map: MapData): { minX: number; maxX: number; minY: number; maxY: number } {
   const minX = 0
-  const maxX = map.width <= 1 ? 0 : HEX_SIZE * 1.5 * (map.width - 1)
+  const oddBump = map.height > 1 ? 0.5 : 0
+  const maxX = HEX_SIZE * Math.sqrt(3) * (map.width - 1 + oddBump)
   const minY = 0
-  const oddBump = map.width > 1 ? 0.5 : 0
-  const maxY = HEX_SIZE * Math.sqrt(3) * (map.height - 1 + oddBump)
+  const maxY = map.height <= 1 ? 0 : HEX_SIZE * 1.5 * (map.height - 1)
   return { minX, maxX, minY, maxY }
 }
 
@@ -113,7 +113,7 @@ export function mapPixelSize(map: MapData): {
   originX: number
   originY: number
 } {
-  const { minX, maxX, minY, maxY } = oddqCenterExtents(map)
+  const { minX, maxX, minY, maxY } = oddrCenterExtents(map)
   const originX = PADDING - minX + HEX_SIZE
   const originY = PADDING - minY + HEX_SIZE
   const width = maxX - minX + HEX_SIZE * 2 + PADDING * 2
@@ -127,7 +127,7 @@ function hexFieldBounds(
   originX: number,
   originY: number,
 ): Rect {
-  const { minX, maxX, minY, maxY } = oddqCenterExtents(map)
+  const { minX, maxX, minY, maxY } = oddrCenterExtents(map)
   return {
     x: minX + originX - HEX_SIZE,
     y: minY + originY - HEX_SIZE,

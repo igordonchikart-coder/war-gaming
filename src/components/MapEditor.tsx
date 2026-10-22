@@ -25,6 +25,9 @@ import {
   suggestGridSizeForUnderlay,
 } from '../hex/map'
 import {
+  DEFAULT_MAP_IMAGE_URL,
+  UNDERLAY_PRESETS,
+  loadMapImage,
   loadMapImagesProgressive,
   type LoadedMapImage,
   type MapImageAlign,
@@ -222,6 +225,11 @@ export function MapEditor() {
   const [tool, setTool] = useState<CanvasTool>('paint')
   /** Optional GPU-friendly downscale; default is full master quality. */
   const [fastUnderlay, setFastUnderlay] = useState(false)
+  /** Active underlay URL (preset or blob: from «Загрузить подложку…»). */
+  const [underlayUrl, setUnderlayUrl] = useState(DEFAULT_MAP_IMAGE_URL)
+  const [underlayLabel, setUnderlayLabel] = useState(
+    () => UNDERLAY_PRESETS.find((p) => p.url === DEFAULT_MAP_IMAGE_URL)?.label ?? 'Подложка',
+  )
   const [calibPhase, setCalibPhase] = useState<CalibPhase | null>(null)
   const [calibMap1, setCalibMap1] = useState<CalibPoint | null>(null)
   const [calibMap2, setCalibMap2] = useState<CalibPoint | null>(null)
@@ -235,6 +243,8 @@ export function MapEditor() {
     y: number
   } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const underlayInputRef = useRef<HTMLInputElement>(null)
+  const underlayObjectUrlRef = useRef<string | null>(null)
   const terrainPickerRef = useRef<HTMLDivElement>(null)
   const skipAutosaveRef = useRef(true)
   const { openId, setOpenId } = useNavMenu()
@@ -252,19 +262,26 @@ export function MapEditor() {
 
   useEffect(() => {
     let cancelled = false
-    setStatus(fastUnderlay ? 'Загрузка подложки (быстрая)…' : 'Загрузка подложки (FULL)…')
-    loadMapImagesProgressive(
-      undefined,
-      undefined,
-      (loaded, index, total) => {
-        if (cancelled) return
-        const quality = loaded.downscaled ? 'даунскейл' : 'FULL'
-        setStatus(
-          `Подложка ${index + 1}/${total} · ${quality} · ${loaded.url} · ${loaded.naturalWidth}×${loaded.naturalHeight} px`,
-        )
-      },
-      { fast: fastUnderlay },
+    setStatus(
+      fastUnderlay
+        ? `Загрузка подложки (быстрая)… ${underlayLabel}`
+        : `Загрузка подложки (FULL)… ${underlayLabel}`,
     )
+    const loader = underlayUrl.startsWith('blob:')
+      ? loadMapImage(underlayUrl, { fast: fastUnderlay }).then((img) => [img])
+      : loadMapImagesProgressive(
+          underlayUrl,
+          undefined,
+          (loaded, index, total) => {
+            if (cancelled) return
+            const quality = loaded.downscaled ? 'даунскейл' : 'FULL'
+            setStatus(
+              `Подложка ${index + 1}/${total} · ${quality} · ${loaded.url} · ${loaded.naturalWidth}×${loaded.naturalHeight} px`,
+            )
+          },
+          { fast: fastUnderlay },
+        )
+    loader
       .then((images) => {
         if (cancelled) return
         setMapImages(images)
@@ -275,7 +292,7 @@ export function MapEditor() {
         const primary = images[0]!
         const quality = primary.downscaled ? 'даунскейл' : 'FULL'
         setStatus(
-          `Подложка ${quality} · ${primary.url} · ${primary.naturalWidth}×${primary.naturalHeight} px` +
+          `Подложка ${quality} · ${underlayLabel} · ${primary.naturalWidth}×${primary.naturalHeight} px` +
             (images.length > 1 ? ` (+${images.length - 1} тайлов)` : ''),
         )
       })
@@ -287,7 +304,16 @@ export function MapEditor() {
     return () => {
       cancelled = true
     }
-  }, [fastUnderlay])
+  }, [fastUnderlay, underlayUrl, underlayLabel])
+
+  useEffect(() => {
+    return () => {
+      if (underlayObjectUrlRef.current) {
+        URL.revokeObjectURL(underlayObjectUrlRef.current)
+        underlayObjectUrlRef.current = null
+      }
+    }
+  }, [])
 
   // Autosave map + calibration to localStorage (skip first paint).
   useEffect(() => {
@@ -587,8 +613,33 @@ export function MapEditor() {
     reader.readAsText(file)
   }
 
+  function selectUnderlayPreset(url: string, label: string) {
+    if (underlayObjectUrlRef.current) {
+      URL.revokeObjectURL(underlayObjectUrlRef.current)
+      underlayObjectUrlRef.current = null
+    }
+    setUnderlayLabel(label)
+    setUnderlayUrl(url)
+    setStatus(`Подложка: ${label}`)
+  }
+
+  function handleLoadUnderlayFile(file: File) {
+    if (!file.type.startsWith('image/') && !/\.(png|webp|jpe?g)$/i.test(file.name)) {
+      setStatus('Нужен PNG / WebP / JPEG')
+      return
+    }
+    if (underlayObjectUrlRef.current) {
+      URL.revokeObjectURL(underlayObjectUrlRef.current)
+    }
+    const url = URL.createObjectURL(file)
+    underlayObjectUrlRef.current = url
+    setUnderlayLabel(file.name)
+    setUnderlayUrl(url)
+    setStatus(`Загрузка подложки: ${file.name}…`)
+  }
+
   function fieldWidthForAlign(): number {
-    return hexFieldPixelWidth(mapRef.current.width)
+    return hexFieldPixelWidth(mapRef.current.width, mapRef.current.height)
   }
 
   function primaryImageWidth(): number {
@@ -816,7 +867,7 @@ export function MapEditor() {
           </div>
           <label
             className="align-controls__check"
-            title="По умолчанию FULL: /map.webp без даунскейла. Включите только если тормозит."
+            title="По умолчанию FULL без даунскейла. Включите только если тормозит (Map2 большой)."
           >
             <input
               type="checkbox"
@@ -825,6 +876,45 @@ export function MapEditor() {
             />
             Быстрая подложка
           </label>
+        </NavMenu>
+
+        <NavMenu
+          id="underlay"
+          openId={openId}
+          onOpenChange={setOpenId}
+          label="Подложка"
+          summary={underlayLabel.length > 18 ? `${underlayLabel.slice(0, 16)}…` : underlayLabel}
+        >
+          <div className="file-controls">
+            {UNDERLAY_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={underlayUrl === p.url ? 'file-controls__primary' : undefined}
+                onClick={() => {
+                  selectUnderlayPreset(p.url, p.label)
+                  closeMenu()
+                }}
+                title={p.url}
+              >
+                {p.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="file-controls__primary"
+              onClick={() => {
+                closeMenu()
+                underlayInputRef.current?.click()
+              }}
+              title="Открыть PNG/WebP/JPEG с диска"
+            >
+              Загрузить подложку…
+            </button>
+          </div>
+          <p className="nav-menu__hint" role="note">
+            Активна: {underlayLabel}. Map2 — новая PNG (pointy-top). После смены — «Автокалибровка».
+          </p>
         </NavMenu>
 
         <NavMenu
@@ -966,7 +1056,7 @@ export function MapEditor() {
                   void handleAutoCalibrate()
                   closeMenu()
                 }}
-                title="Автокалибровка map.webp (scaleX/Y + offset + warp, сетка 69×51)."
+                title="Автокалибровка Map2 (scaleX/Y + offset + warp, сетка 66×44, pointy-top)."
               >
                 Автокалибровка
               </button>
@@ -1018,8 +1108,8 @@ export function MapEditor() {
               </button>
             </div>
             <p className="nav-menu__hint" role="note">
-              Автокалибровка — TPS-варп на flat-top сетку (8 якорей). Или Load{' '}
-              <code>public/map/map-align-autocal.json</code>.
+              Автокалибровка — TPS-варп на pointy-top сетку Map2 (8 якорей, 66×44). Или Open →{' '}
+              <code>map-align-autocal.json</code>.
             </p>
           </div>
         </NavMenu>
@@ -1128,6 +1218,17 @@ export function MapEditor() {
             </button>
             <button
               type="button"
+              className="file-controls__primary"
+              onClick={() => {
+                closeMenu()
+                underlayInputRef.current?.click()
+              }}
+              title="PNG/WebP/JPEG подложка с диска"
+            >
+              Загрузить подложку…
+            </button>
+            <button
+              type="button"
               onClick={() => runAndClose(handleSaveLocal)}
               title="Только в этом браузере (localStorage), без файла на диске"
             >
@@ -1146,11 +1247,11 @@ export function MapEditor() {
                 fileInputRef.current?.click()
               }}
             >
-              Open
+              Open JSON
             </button>
           </div>
           <p className="nav-menu__hint" role="note">
-            Сохранить как… — карта + калибровка в JSON на диск
+            Подложка: PNG с диска или список в меню «Подложка». Сохранить как… — карта + калибровка.
           </p>
         </NavMenu>
 
@@ -1181,6 +1282,17 @@ export function MapEditor() {
           onChange={(e) => {
             const file = e.target.files?.[0]
             if (file) handleLoadFile(file)
+            e.target.value = ''
+          }}
+        />
+        <input
+          ref={underlayInputRef}
+          type="file"
+          accept="image/png,image/webp,image/jpeg,.png,.webp,.jpg,.jpeg"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) handleLoadUnderlayFile(file)
             e.target.value = ''
           }}
         />
