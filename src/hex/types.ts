@@ -81,12 +81,12 @@ export const WARN_MAP_SIZE = 200
 export const LABEL_CELL_LIMIT = 2500
 /**
  * Bump when shipped absolute auto-calibration changes so stale localStorage
- * (74×37 / pointy 66×44 / Hanko) cannot override Map2 23×11.
+ * (v6 sparse TPS / 74×37 / Hanko) cannot override Map2 23×11 full-sheet warp.
  */
-export const STORAGE_KEY = 'war-gaming-map-v6'
+export const STORAGE_KEY = 'war-gaming-map-v7'
 /** Separate key for last calibration snapshot (mirrors mapAlign in the map JSON). */
-export const ALIGN_STORAGE_KEY = 'war-gaming-map-align-v6'
-/** Legacy keys — cleared on autocalibrate / first load of v6. */
+export const ALIGN_STORAGE_KEY = 'war-gaming-map-align-v7'
+/** Legacy keys — cleared on autocalibrate / first load of v7. */
 export const LEGACY_STORAGE_KEYS = [
   'war-gaming-map-v1',
   'war-gaming-map-align-v1',
@@ -98,4 +98,6 @@ export const LEGACY_STORAGE_KEYS = [
   'war-gaming-map-align-v4',
   'war-gaming-map-v5',
   'war-gaming-map-align-v5',
+  'war-gaming-map-v6',
+  'war-gaming-map-align-v6',
 ] as const

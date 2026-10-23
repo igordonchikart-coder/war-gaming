@@ -1108,7 +1108,7 @@ export function MapEditor() {
               </button>
             </div>
             <p className="nav-menu__hint" role="note">
-              Автокалибровка — TPS-варп на flat-top сетку Map2 (9 якорей, 23×11). Или Open →{' '}
+              Автокалибровка — плотный TPS на flat-top сетку Map2 (вся 23×11, края). Или Open →{' '}
               <code>map-align-autocal.json</code>.
             </p>
           </div>

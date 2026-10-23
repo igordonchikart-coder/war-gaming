@@ -4,9 +4,9 @@ import autoCalibData from './autoCalibData.json'
 
 /**
  * Offline auto-calibration for `public/map/Map2.png` (~22917×13302) vs
- * flat-top odd-q overlay (`HEX_SIZE` = 22). Nine anchors (4 corners +
- * side mids + center) → TPS mesh warping the underlay onto the ideal hex
- * grid. Affine scale/shear remain as a coarse fallback when the mesh is stripped.
+ * flat-top odd-q overlay (`HEX_SIZE` = 22). Dense full-sheet ring-locks
+ * (all cells incl. unused edge/margin hexes) → TPS mesh warping the underlay
+ * onto the ideal hex grid. Affine/perspective remain as coarse fallback.
  */
 const baked = autoCalibData.mapAlign as MapImageAlign
 
@@ -33,13 +33,13 @@ export const AUTO_CALIB_GRID_HEIGHT = 11
 
 /** Human-readable uncertainty for status / docs. */
 export const AUTO_CALIB_ERROR_NOTE =
-  'TPS-варп по 9 якорям (углы+середины+центр); сетка идеальная flat-top 23×11 — подложка Map2 садится на неё'
+  'Плотный TPS по всей сетке 23×11 (включая крайние/неиспользуемые клетки) — подложка Map2 садится на печатные линии'
 
 /** Optional runtime override URL (same numbers shipped in-repo). */
 export const CALIBRATION_JSON_URL = '/map/calibration.json'
 
 export interface CalibrationFile {
-  version: 2 | 3
+  version: 2 | 3 | 4
   source: string
   imageWidth: number
   imageHeight: number

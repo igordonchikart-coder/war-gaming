@@ -91,12 +91,12 @@ export interface MapImageAlign {
  * (see `src/hex/autoCalibrate.ts` / `public/map/calibration.json`).
  */
 export const DEFAULT_MAP_ALIGN: MapImageAlign = {
-  scaleX: 0.036472999349010854,
-  scaleY: 0.03714752241015404,
-  offsetX: -30.158634193608677,
-  offsetY: -20.309532377340844,
-  shearX: -0.0003023956936238793,
-  shearY: -0.000163644606617456,
+  scaleX: 0.03652659713895668,
+  scaleY: 0.037194920971782584,
+  offsetX: -31.343614726953845,
+  offsetY: -24.768396452795223,
+  shearX: -0.00001566773815933822,
+  shearY: -0.0000021688920576174184,
   fitWidth: false,
 }
 
